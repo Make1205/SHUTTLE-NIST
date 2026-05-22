@@ -227,12 +227,7 @@ These three scripts together regenerate every auto-generated header from first-p
 
 ## 8. Benchmark Results
 
-> All numbers below are from **portable C reference implementations**
-> (no AVX2 / SSE / NEON vectorization), measured cycle-count via the
-> `rdtsc`-class cycle counter. Raw logs are in
-> [`ref/speed_SHUTTLE.txt`](ref/speed_SHUTTLE.txt),
-> [`ref/speed_HAETAE.txt`](ref/speed_HAETAE.txt),
-> [`ref/speed_dilithium.txt`](ref/speed_dilithium.txt).
+> All numbers below are from **portable C reference implementations** (no AVX2 / SSE / NEON vectorization), measured by `rdtsc`-class cycle counter. Raw logs are in [`ref/speed_SHUTTLE.txt`](ref/speed_SHUTTLE.txt), [`ref/speed_HAETAE.txt`](ref/speed_HAETAE.txt), [`ref/speed_dilithium.txt`](ref/speed_dilithium.txt).
 
 ### 8.1 Platform
 
@@ -241,8 +236,7 @@ These three scripts together regenerate every auto-generated header from first-p
 * Turbo Boost: **disabled** (`intel_pstate/no_turbo = 1`)
 * Hyper-Threading: **disabled** (one thread per core)
 * Compiler: gcc 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04)
-* Build: each scheme's default Makefile (`CC ?= gcc`); no `-mavx2`,
-  no hand-written assembly. Reference C only.
+* Build: each scheme's default Makefile (`CC ?= gcc`); no `-mavx2`, no hand-written assembly. Reference C only.
 
 ### 8.2 Per-mode cycle counts (median)
 
@@ -255,9 +249,7 @@ These three scripts together regenerate every auto-generated header from first-p
 
 ## 9. Comparison with Related Schemes
 
-> All schemes compared in this section are **reference (portable C)
-> implementations without AVX2 / vector optimization**, measured on
-> the platform of §8.1.
+> All schemes compared in this section are **reference (portable C) implementations without AVX2 / vector optimization**, measured on the platform of §8.1.
 
 ### 9.1 Size
 
