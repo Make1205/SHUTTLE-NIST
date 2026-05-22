@@ -44,13 +44,6 @@ void poly_uniform_eta(poly *a,
 #define poly_challenge SHUTTLE_NAMESPACE(poly_challenge)
 void poly_challenge(poly *c, const uint8_t seed[SHUTTLE_CTILDEBYTES]);
 
-#define poly_decompose SHUTTLE_NAMESPACE(poly_decompose)
-void poly_decompose(poly *a1, poly *a0, const poly *a);
-#define poly_make_hint SHUTTLE_NAMESPACE(poly_make_hint)
-unsigned int poly_make_hint(poly *h, const poly *a0, const poly *a1);
-#define poly_use_hint SHUTTLE_NAMESPACE(poly_use_hint)
-void poly_use_hint(poly *b, const poly *a, const poly *h);
-
 #define polyeta_pack SHUTTLE_NAMESPACE(polyeta_pack)
 void polyeta_pack(uint8_t *r, const poly *a);
 #define polyeta_unpack SHUTTLE_NAMESPACE(polyeta_unpack)

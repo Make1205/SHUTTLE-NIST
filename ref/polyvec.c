@@ -383,63 +383,6 @@ int64_t polyveck_sq_norm(const polyveck *v) {
   return norm;
 }
 
-/*************************************************
-* Name:        polyveck_decompose
-*
-* Description: For all coefficients a of polynomials in vector of length M,
-*              compute high and low bits a1, a0 such that
-*              a mod^+ Q = a1 * 2*ALPHA_H + a0.
-*
-* Arguments:   - polyveck *v1: pointer to output vector with high bits
-*              - polyveck *v0: pointer to output vector with low bits
-*              - const polyveck *v: pointer to input vector
-**************************************************/
-void polyveck_decompose(polyveck *v1, polyveck *v0, const polyveck *v) {
-  unsigned int i;
-
-  for(i = 0; i < SHUTTLE_M; ++i)
-    poly_decompose(&v1->vec[i], &v0->vec[i], &v->vec[i]);
-}
-
-/*************************************************
-* Name:        polyveck_make_hint
-*
-* Description: Compute hint vector.
-*
-* Arguments:   - polyveck *h: pointer to output vector
-*              - const polyveck *v0: pointer to low part of input vector
-*              - const polyveck *v1: pointer to high part of input vector
-*
-* Returns number of 1 bits.
-**************************************************/
-unsigned int polyveck_make_hint(polyveck *h,
-                                const polyveck *v0,
-                                const polyveck *v1)
-{
-  unsigned int i, s = 0;
-
-  for(i = 0; i < SHUTTLE_M; ++i)
-    s += poly_make_hint(&h->vec[i], &v0->vec[i], &v1->vec[i]);
-
-  return s;
-}
-
-/*************************************************
-* Name:        polyveck_use_hint
-*
-* Description: Use hint vector to correct the high bits of input vector.
-*
-* Arguments:   - polyveck *w: pointer to output vector with corrected high bits
-*              - const polyveck *v: pointer to input vector
-*              - const polyveck *h: pointer to input hint vector
-**************************************************/
-void polyveck_use_hint(polyveck *w, const polyveck *v, const polyveck *h) {
-  unsigned int i;
-
-  for(i = 0; i < SHUTTLE_M; ++i)
-    poly_use_hint(&w->vec[i], &v->vec[i], &h->vec[i]);
-}
-
 void polyveck_pack_w1(uint8_t r[SHUTTLE_M * SHUTTLE_POLYW1_PACKEDBYTES],
                       const polyveck *w1)
 {

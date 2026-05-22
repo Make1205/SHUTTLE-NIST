@@ -232,15 +232,18 @@ int64_t approx_neg_ln(uint64_t r_rand) {
     uint64_t e;
     uint64_t m;
 
-    if (r_rand == 0) {
-        /* Clamp: -ln(0) = +inf, but we return 64*ln(2) as the maximum
-         * representable value (same as r_rand = 1). */
-        e = 63;
-        m = UINT64_C(1) << 63;  /* m_frac = 1.0 */
-    } else {
-        e = (uint64_t)__builtin_clzll(r_rand);
-        m = r_rand << e;
-    }
+    /* Constant-time substitute: replace r_rand = 0 with r_rand = 1.
+     * For r_rand = 1, CLZ returns 63 and m = 1 << 63 -- exactly the
+     * intended clamp (-ln(0) -> 64*ln(2), the maximum representable
+     * value). No data-dependent branch.
+     *
+     *   is_zero = 1 iff r_rand == 0, 0 otherwise
+     *   r_safe  = r_rand + is_zero    (= 1 when r_rand = 0; unchanged
+     *                                   when r_rand != 0). */
+    uint64_t is_zero = ((r_rand | (0ULL - r_rand)) >> 63) ^ 1ULL;
+    uint64_t r_safe  = r_rand + is_zero;
+    e = (uint64_t)__builtin_clzll(r_safe);
+    m = r_safe << e;
 
     /*
      * Step 2: Table Index.
@@ -321,15 +324,17 @@ int64_t approx_neg_ln(uint64_t r_rand) {
     wide_int128 ell_wide = (wide_int128)(int64_t)(e + 1) * (wide_int128)LN2_Q62
                          - (wide_int128)ln_m;
 
-    /* Clamp to int64 range. For SHUTTLE parameters, ell values that exceed
-     * int64 max only occur for extremely small r_rand, and those values
-     * always lead to acceptance (ell >> ln_M) and land in a parity-invariant
-     * region (ell' > c_99). So clamping is safe. */
-    int64_t ell;
-    if (ell_wide > (wide_int128)INT64_MAX)
-        ell = INT64_MAX;
-    else
-        ell = (int64_t)ell_wide;
+    /* Constant-time saturating cast from int128 to int64. ell_wide is
+     * always non-negative (e >= 0, LN2_Q62 > 0, ln_m bounded above by
+     * LN2_Q62), so we only saturate on positive overflow.
+     *
+     * Overflow happens when the upper 64 bits do not match the sign
+     * extension of the lower 64 bits. */
+    int64_t ell_lo = (int64_t)ell_wide;
+    int64_t ell_hi = (int64_t)(ell_wide >> 64);
+    int64_t ell_hi_expected = ell_lo >> 63;
+    int64_t pos_ovf_mask = (ell_hi_expected - ell_hi) >> 63;  /* -1 if ell_hi > expected */
+    int64_t ell = (ell_lo & ~pos_ovf_mask) | (INT64_MAX & pos_ovf_mask);
 
     return ell;
 }

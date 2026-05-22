@@ -223,13 +223,18 @@ static int irs_step(polyvec *z,
     int64_t inner = polyvec_inner_product(z, v);
 
     wide_int128 u_wide = (wide_int128)inner * (wide_int128)SHUTTLE_INV_SIGMA2_Q62;
-    int64_t u_q62;
-    if (u_wide > (wide_int128)INT64_MAX)
-        u_q62 = INT64_MAX;
-    else if (u_wide < (wide_int128)INT64_MIN)
-        u_q62 = INT64_MIN;
-    else
-        u_q62 = (int64_t)u_wide;
+    /* Constant-time saturating cast from int128 to int64.
+     * Overflow happens when the upper 64 bits do not equal the sign
+     * extension of the lower 64 bits. Two sign-bit masks select between
+     * INT64_MIN, low64, and INT64_MAX without branching. */
+    int64_t u_lo = (int64_t)u_wide;
+    int64_t u_hi = (int64_t)(u_wide >> 64);
+    int64_t u_hi_expected = u_lo >> 63;
+    int64_t pos_ovf_mask = (u_hi_expected - u_hi) >> 63;  /* -1 if u_hi > expected */
+    int64_t neg_ovf_mask = (u_hi - u_hi_expected) >> 63;  /* -1 if u_hi < expected */
+    int64_t u_q62 = (u_lo  & ~pos_ovf_mask & ~neg_ovf_mask)
+                  | (INT64_MAX &  pos_ovf_mask)
+                  | (INT64_MIN &  neg_ovf_mask);
 
     /* Step 2: Compute ell = -ln(r_rand) in Q62 */
     int64_t ell = approx_neg_ln(r_rand);

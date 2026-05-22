@@ -373,62 +373,6 @@ void poly_challenge(poly *c, const uint8_t seed[SHUTTLE_CTILDEBYTES]) {
 /*********** Decomposition wrappers ***************************/
 /**************************************************************/
 
-/*************************************************
-* Name:        poly_decompose
-*
-* Description: For all coefficients c of the input polynomial,
-*              compute high and low bits c1, c0 such that
-*              c mod Q = c1 * 2*ALPHA_H + c0.
-*
-* Arguments:   - poly *a1: pointer to output polynomial with coefficients c1
-*              - poly *a0: pointer to output polynomial with coefficients c0
-*              - const poly *a: pointer to input polynomial
-**************************************************/
-void poly_decompose(poly *a1, poly *a0, const poly *a) {
-  unsigned int i;
-
-  for(i = 0; i < SHUTTLE_N; ++i)
-    a1->coeffs[i] = decompose(&a0->coeffs[i], a->coeffs[i]);
-}
-
-/*************************************************
-* Name:        poly_make_hint
-*
-* Description: Compute hint polynomial.
-*
-* Arguments:   - poly *h: pointer to output hint polynomial
-*              - const poly *a0: pointer to low part of input polynomial
-*              - const poly *a1: pointer to high part of input polynomial
-*
-* Returns number of 1 bits.
-**************************************************/
-unsigned int poly_make_hint(poly *h, const poly *a0, const poly *a1) {
-  unsigned int i, s = 0;
-
-  for(i = 0; i < SHUTTLE_N; ++i) {
-    h->coeffs[i] = make_hint(a0->coeffs[i], a1->coeffs[i]);
-    s += h->coeffs[i];
-  }
-
-  return s;
-}
-
-/*************************************************
-* Name:        poly_use_hint
-*
-* Description: Use hint polynomial to correct the high bits of a polynomial.
-*
-* Arguments:   - poly *b: pointer to output polynomial with corrected high bits
-*              - const poly *a: pointer to input polynomial
-*              - const poly *h: pointer to input hint polynomial
-**************************************************/
-void poly_use_hint(poly *b, const poly *a, const poly *h) {
-  unsigned int i;
-
-  for(i = 0; i < SHUTTLE_N; ++i)
-    b->coeffs[i] = use_hint(a->coeffs[i], h->coeffs[i]);
-}
-
 /**************************************************************/
 /*********** Packing routines *********************************/
 /**************************************************************/

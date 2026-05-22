@@ -104,17 +104,6 @@ int polyveck_chknorm(const polyveck *v, int32_t B);
 #define polyveck_sq_norm SHUTTLE_NAMESPACE(polyveck_sq_norm)
 int64_t polyveck_sq_norm(const polyveck *v);
 
-#define polyveck_decompose SHUTTLE_NAMESPACE(polyveck_decompose)
-void polyveck_decompose(polyveck *v1, polyveck *v0, const polyveck *v);
-
-#define polyveck_make_hint SHUTTLE_NAMESPACE(polyveck_make_hint)
-unsigned int polyveck_make_hint(polyveck *h,
-                                const polyveck *v0,
-                                const polyveck *v1);
-
-#define polyveck_use_hint SHUTTLE_NAMESPACE(polyveck_use_hint)
-void polyveck_use_hint(polyveck *w, const polyveck *v, const polyveck *h);
-
 #define polyveck_pack_w1 SHUTTLE_NAMESPACE(polyveck_pack_w1)
 void polyveck_pack_w1(uint8_t r[SHUTTLE_M * SHUTTLE_POLYW1_PACKEDBYTES],
                       const polyveck *w1);
