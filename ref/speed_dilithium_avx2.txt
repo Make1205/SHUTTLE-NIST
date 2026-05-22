@@ -1,0 +1,39 @@
+Dilithium-2
+Keypair:
+median: 80884 cycles/ticks
+average: 81243 cycles/ticks
+
+Sign:
+median: 186052 cycles/ticks
+average: 231422 cycles/ticks
+
+Verify:
+median: 85856 cycles/ticks
+average: 86131 cycles/ticks
+
+Dilithium-3
+Keypair:
+median: 138006 cycles/ticks
+average: 158119 cycles/ticks
+
+Sign:
+median: 314522 cycles/ticks
+average: 392968 cycles/ticks
+
+Verify:
+median: 139080 cycles/ticks
+average: 139290 cycles/ticks
+
+Dilithium-5
+Keypair:
+median: 215246 cycles/ticks
+average: 215708 cycles/ticks
+
+Sign:
+median: 383180 cycles/ticks
+average: 451154 cycles/ticks
+
+Verify:
+median: 215968 cycles/ticks
+average: 216844 cycles/ticks
+

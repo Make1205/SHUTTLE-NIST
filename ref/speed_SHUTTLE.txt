@@ -1,0 +1,48 @@
+=== SHUTTLE-NIST-120 Benchmarks (shuttle_nist120_ref) ===
+Parameters: N=256, Q=32257, L=3, M=2, SIGMA=67, TAU=58
+PK=992 bytes, SK=448 bytes, SIG=1153 bytes
+
+crypto_sign_keypair:
+median: 185414 cycles/ticks
+average: 199095 cycles/ticks
+
+crypto_sign_signature:
+median: 1500852 cycles/ticks
+average: 1538083 cycles/ticks
+
+crypto_sign_verify:
+median: 267318 cycles/ticks
+average: 267847 cycles/ticks
+
+=== SHUTTLE-NIST-180 Benchmarks (shuttle_nist180_ref) ===
+Parameters: N=256, Q=15361, L=4, M=3, SIGMA=79, TAU=80
+PK=1376 bytes, SK=576 bytes, SIG=1565 bytes
+
+crypto_sign_keypair:
+median: 327666 cycles/ticks
+average: 340918 cycles/ticks
+
+crypto_sign_signature:
+median: 2290054 cycles/ticks
+average: 2314111 cycles/ticks
+
+crypto_sign_verify:
+median: 434272 cycles/ticks
+average: 435019 cycles/ticks
+
+=== SHUTTLE-NIST-255 Benchmarks (shuttle_nist255_ref) ===
+Parameters: N=256, Q=7681, L=5, M=4, SIGMA=90, TAU=128
+PK=1696 bytes, SK=704 bytes, SIG=1965 bytes
+
+crypto_sign_keypair:
+median: 487610 cycles/ticks
+average: 507473 cycles/ticks
+
+crypto_sign_signature:
+median: 3553374 cycles/ticks
+average: 3588450 cycles/ticks
+
+crypto_sign_verify:
+median: 619976 cycles/ticks
+average: 621021 cycles/ticks
+

@@ -1,0 +1,51 @@
+CRYPTO_ALGNAME: HAETAE2
+Keypair:
+median: 452010 cycles/ticks
+average: 574929 cycles/ticks
+
+Sign:
+median: 1152026 cycles/ticks
+average: 1640731 cycles/ticks
+
+Sample_hyperball:
+median: 243772 cycles/ticks
+average: 244266 cycles/ticks
+
+Verify:
+median: 85106 cycles/ticks
+average: 84778 cycles/ticks
+
+CRYPTO_ALGNAME: HAETAE3
+Keypair:
+median: 605668 cycles/ticks
+average: 847898 cycles/ticks
+
+Sign:
+median: 1525722 cycles/ticks
+average: 1893151 cycles/ticks
+
+Sample_hyperball:
+median: 317386 cycles/ticks
+average: 318240 cycles/ticks
+
+Verify:
+median: 128206 cycles/ticks
+average: 129189 cycles/ticks
+
+CRYPTO_ALGNAME: HAETAE5
+Keypair:
+median: 628052 cycles/ticks
+average: 880165 cycles/ticks
+
+Sign:
+median: 1791054 cycles/ticks
+average: 2567538 cycles/ticks
+
+Sample_hyperball:
+median: 366820 cycles/ticks
+average: 367469 cycles/ticks
+
+Verify:
+median: 154070 cycles/ticks
+average: 154403 cycles/ticks
+
