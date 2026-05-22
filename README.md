@@ -199,26 +199,7 @@ taskset -c 0 ./test/out/speed_sign120
 
 Reports cycles per sample for the BLISS-style discrete Gaussian sampler in isolation.
 
-### 6.3 Per-stage profiling
-
-```bash
-./test/out/profile_sign<m>
-```
-
-Breaks `crypto_sign_signature` down into:
-
-1. preprocessing (key unpack, mu / rhoprime hashing);
-2. `y` sampling;
-3. commitment;
-4. challenge;
-5. iterative rejection sampling (IRS);
-6. finalize (post-IRS arithmetic);
-7. pack plumbing (header + low-bits packing);
-8. merged-stream rANS encode.
-
-Useful to identify hotspots before optimizing.
-
-### 6.4 Signature-size reproducibility
+### 6.3 Signature-size reproducibility
 
 ```bash
 cd SHUTTLE-NIST/tools
@@ -244,68 +225,67 @@ These three scripts together regenerate every auto-generated header from first-p
 * `__int128` is used in `approx_exp.c`, `approx_log.c` and `sampler.c` for 128-bit fixed-point arithmetic. Both `gcc` and `clang` lower this to a single `mulq` on x86-64.
 
 
-## 8. Benchmark Results (to be filled in)
+## 8. Benchmark Results
+
+> All numbers below are from **portable C reference implementations**
+> (no AVX2 / SSE / NEON vectorization), measured cycle-count via the
+> `rdtsc`-class cycle counter. Raw logs are in
+> [`ref/speed_SHUTTLE.txt`](ref/speed_SHUTTLE.txt),
+> [`ref/speed_HAETAE.txt`](ref/speed_HAETAE.txt),
+> [`ref/speed_dilithium.txt`](ref/speed_dilithium.txt).
 
 ### 8.1 Platform
 
-* CPU: _TBD_
-* Microarchitecture: _TBD_
-* Frequency policy: _TBD_ (e.g. fixed 2.x GHz, Turbo / SMT disabled)
-* Compiler: _TBD_
-* Compiler flags: _TBD_
+* OS: Ubuntu 24.04.2 LTS (kernel 6.11.0-26-generic, x86_64)
+* CPU: 11th Gen Intel(R) Core(TM) i7-11700K @ 3.60 GHz (fixed)
+* Turbo Boost: **disabled** (`intel_pstate/no_turbo = 1`)
+* Hyper-Threading: **disabled** (one thread per core)
+* Compiler: gcc 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04)
+* Build: each scheme's default Makefile (`CC ?= gcc`); no `-mavx2`,
+  no hand-written assembly. Reference C only.
 
-### 8.2 Per-mode cycle counts
+### 8.2 Per-mode cycle counts (median)
 
 | Operation | NIST-120 | NIST-180 | NIST-255 |
 | --- | ---: | ---: | ---: |
-| `crypto_sign_keypair` (median) | _TBD_ | _TBD_ | _TBD_ |
-| `crypto_sign_signature` (median) | _TBD_ | _TBD_ | _TBD_ |
-| `crypto_sign_verify` (median) | _TBD_ | _TBD_ | _TBD_ |
-| Sampler (cycles / sample) | _TBD_ | _TBD_ | _TBD_ |
-
-### 8.3 Per-stage signing breakdown
-
-| Stage | NIST-120 | NIST-180 | NIST-255 |
-| --- | ---: | ---: | ---: |
-| Preprocess | _TBD_ | _TBD_ | _TBD_ |
-| Gaussian `y` sampling | _TBD_ | _TBD_ | _TBD_ |
-| Commitment | _TBD_ | _TBD_ | _TBD_ |
-| Challenge | _TBD_ | _TBD_ | _TBD_ |
-| IRS | _TBD_ | _TBD_ | _TBD_ |
-| Finalize | _TBD_ | _TBD_ | _TBD_ |
-| Pack plumbing | _TBD_ | _TBD_ | _TBD_ |
-| rANS encode | _TBD_ | _TBD_ | _TBD_ |
+| `crypto_sign_keypair` | 185 414 | 327 666 | 487 610 |
+| `crypto_sign_signature` | 1 500 852 | 2 290 054 | 3 553 374 |
+| `crypto_sign_verify` | 267 318 | 434 272 | 619 976 |
 
 
-## 9. Comparison with Related Schemes (to be filled in)
+## 9. Comparison with Related Schemes
+
+> All schemes compared in this section are **reference (portable C)
+> implementations without AVX2 / vector optimization**, measured on
+> the platform of §8.1.
 
 ### 9.1 Size
 
-| Scheme | Level | pk (B) | sk (B) | sig (B) | pk + sig (B) |
-| --- | --- | ---: | ---: | ---: | ---: |
-| **SHUTTLE-NIST** | I (120) | 992 | 448 | 1153 | 2145 |
-| **SHUTTLE-NIST** | III (180) | 1376 | 576 | 1565 | 2941 |
-| **SHUTTLE-NIST** | V (255) | 1696 | 704 | 1965 | 3661 |
-| _comparator A_ | I | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| _comparator A_ | III | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| _comparator A_ | V | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| _comparator B_ | I | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| _comparator B_ | III | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-| _comparator B_ | V | _TBD_ | _TBD_ | _TBD_ | _TBD_ |
-
-### 9.2 Performance
-
-| Scheme | Level | keypair (cycles) | sign (cycles) | verify (cycles) |
+| Scheme | Level | pk (B) | sig (B) | pk + sig (B) |
 | --- | --- | ---: | ---: | ---: |
-| **SHUTTLE-NIST** | I (120) | _TBD_ | _TBD_ | _TBD_ |
-| **SHUTTLE-NIST** | III (180) | _TBD_ | _TBD_ | _TBD_ |
-| **SHUTTLE-NIST** | V (255) | _TBD_ | _TBD_ | _TBD_ |
-| _comparator A_ | I | _TBD_ | _TBD_ | _TBD_ |
-| _comparator A_ | III | _TBD_ | _TBD_ | _TBD_ |
-| _comparator A_ | V | _TBD_ | _TBD_ | _TBD_ |
-| _comparator B_ | I | _TBD_ | _TBD_ | _TBD_ |
-| _comparator B_ | III | _TBD_ | _TBD_ | _TBD_ |
-| _comparator B_ | V | _TBD_ | _TBD_ | _TBD_ |
+| **SHUTTLE-NIST** | I (120) | 992 | 1153 | **2 145** |
+| HAETAE | I (120) | 992 | 1474 | 2 466 |
+| Dilithium / ML-DSA | 2 | 1312 | 2420 | 3 732 |
+| **SHUTTLE-NIST** | III (180) | 1376 | 1565 | **2 941** |
+| HAETAE | III (180) | 1472 | 2349 | 3 821 |
+| Dilithium / ML-DSA | 3 | 1952 | 3309 | 5 261 |
+| **SHUTTLE-NIST** | V (255) | 1696 | 1965 | **3 661** |
+| HAETAE | V (260) | 2080 | 2948 | 5 028 |
+| Dilithium / ML-DSA | 5 | 2592 | 4627 | 7 219 |
+
+### 9.2 Performance (cycles, median)
+
+| Scheme | Level | keypair | sign | verify |
+| --- | --- | ---: | ---: | ---: |
+| **SHUTTLE-NIST** | I (120) | **185 414** | **1 500 852** | **267 318** |
+| HAETAE | I (120) | 1 027 864 | 3 075 892 | 209 942 |
+| Dilithium / ML-DSA | 2 | 287 706 | 1 023 192 | 318 884 |
+| **SHUTTLE-NIST** | III (180) | **327 666** | **2 290 054** | **434 272** |
+| HAETAE | III (180) | 1 670 576 | 3 619 096 | 369 052 |
+| Dilithium / ML-DSA | 3 | 515 378 | 1 647 286 | 494 408 |
+| **SHUTTLE-NIST** | V (255) | **487 610** | **3 553 374** | **619 976** |
+| HAETAE | V (260) | 1 408 690 | 5 808 388 | 461 370 |
+| Dilithium / ML-DSA | 5 | 782 296 | 2 129 556 | 822 014 |
 
 
 ## 10. License
