@@ -1,3 +1,13 @@
+=== Benchmark Environment ===
+OS: Ubuntu 24.04.2 LTS (Noble Numbat)
+Kernel: Linux 6.11.0-26-generic x86_64
+Compiler: gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0
+Build default: CC ?= gcc
+CPU model: 11th Gen Intel(R) Core(TM) i7-11700K @ 3.60GHz
+CPU frequency: 3599.961 MHz current, 3600.0000 MHz max
+Turbo Boost: disabled (intel_pstate/no_turbo = 1)
+Hyper-Threading: disabled (Thread(s) per core = 1)
+
 === SHUTTLE-NIST-120 Benchmarks (shuttle_nist120_ref) ===
 Parameters: N=256, Q=32257, L=3, M=2, SIGMA=67, TAU=58
 PK=992 bytes, SK=448 bytes, SIG=1153 bytes
