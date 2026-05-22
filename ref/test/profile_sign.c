@@ -224,8 +224,7 @@ int main(void)
     randombytes(msg, 32);
 
     uint64_t c_start, c_pre, c_gauss, c_commit, c_challenge, c_irs;
-    uint64_t c_fin, c_plumb_hdr, c_rans_z0_end, c_plumb_lo;
-    uint64_t c_rans_z1_end, c_plumb_hflat, c_rans_hint_end;
+    uint64_t c_fin, c_plumb_hdr, c_rans_hint_end;
 
     uint64_t run_gauss = 0, run_commit = 0, run_challenge = 0;
     uint64_t run_irs = 0, run_fin = 0;

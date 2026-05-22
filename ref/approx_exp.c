@@ -146,8 +146,8 @@ uint64_t approx_exp(uint64_t a_q60) {
      *   X = R >> beta  <  2^64     (Q64, fits uint64 exactly)
      * -------------------------------------------------------------- */
     {
-        unsigned __int128 R = (unsigned __int128)m * APPROX_EXP_LB
-                            - ((unsigned __int128)a_q60 << (APPROX_EXP_BETA + 4));
+        wide_uint128 R = (wide_uint128)m * APPROX_EXP_LB
+                            - ((wide_uint128)a_q60 << (APPROX_EXP_BETA + 4));
         uint64_t X = (uint64_t)(R >> APPROX_EXP_BETA);
 
         /* ----------------------------------------------------------
@@ -188,7 +188,7 @@ uint64_t approx_exp(uint64_t a_q60) {
         uint64_t ps_q62 = mulh64(p, s);
         uint64_t W = ps_q62 << 1;
         uint64_t round_bit = (UINT64_C(1) << n) >> 1;   /* 0 when n == 0 */
-        unsigned __int128 W_rounded = (unsigned __int128)W + round_bit;
+        wide_uint128 W_rounded = (wide_uint128)W + round_bit;
         return (uint64_t)(W_rounded >> n);
     }
 }

@@ -69,8 +69,11 @@ int main(void)
 
   /* ---- Test 2: Sign + Verify ---- */
   printf("[Test 2] Sign and verify...\n");
-  mlen = 33;
-  memcpy(msg, "SHUTTLE test message, round 0", mlen);
+  {
+    static const char m2[] = "SHUTTLE test message, round 0";
+    mlen = sizeof(m2) - 1;  /* exclude trailing NUL */
+    memcpy(msg, m2, mlen);
+  }
 
   ret = crypto_sign_signature(sig, &siglen, msg, mlen, sk);
   if(ret != 0) { printf("  FAIL: sign returned %d\n", ret); return 1; }

@@ -1,3 +1,9 @@
+/* _GNU_SOURCE must be defined before any system header is pulled in,
+ * otherwise glibc's feature-test layer locks out syscall() / SYS_getrandom. */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -10,7 +16,6 @@
 #include <fcntl.h>
 #include <errno.h>
 #ifdef __linux__
-#define _GNU_SOURCE
 #include <unistd.h>
 #include <sys/syscall.h>
 #else

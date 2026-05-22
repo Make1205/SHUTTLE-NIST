@@ -199,9 +199,9 @@ static int sample_gauss_attempt(int16_t *r,
      * `num` is bounded by 2^17 (see comment above) and `I_hi` < 2^3,
      * so `num * I_hi` always fits in a uint64 -- no nested 128-bit
      * multiplication is required. */
-    unsigned __int128 M_lo = (unsigned __int128)num * APPROX_EXP_I_LO;
+    wide_uint128 M_lo = (wide_uint128)num * APPROX_EXP_I_LO;
     uint64_t          M_hi = (uint64_t)num * APPROX_EXP_I_HI;
-    unsigned __int128 M = M_lo + ((unsigned __int128)M_hi << 64);
+    wide_uint128 M = M_lo + ((wide_uint128)M_hi << 64);
     uint64_t a_q60 = (uint64_t)(M >> 20);
 
     uint64_t exp_val_q63 = approx_exp(a_q60);
