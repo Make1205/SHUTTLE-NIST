@@ -1,0 +1,15 @@
+# Build artifacts
+ref/test/out/
+ref/vector/*.kat
+ref/vector/*.rsp
+ref/vector/gen_vectors_*
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS noise
+*.swp
+*.swo
+.DS_Store
