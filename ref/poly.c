@@ -329,10 +329,9 @@ void poly_uniform_eta(poly *a,
 *              SHAKE-256 output stream of seed as pseudorandom choice for
 *              the Fisher-Yates shuffle.
 *
-*              SHUTTLE restricts the challenge to {0, +1} (no negative
-*              entries). Sign randomization is handled separately by IRS
-*              through per-monomial sign bits (irs_signs), not by the
-*              challenge polynomial itself.
+*              SHUTTLE restricts the challenge to {0, +1}. The IRS update
+*              direction need not be serialized because verification over
+*              the lifted modulus uses only the challenge parity.
 *
 * Arguments:   - poly *c: pointer to output polynomial
 *              - const uint8_t seed[]: byte array containing seed of length
@@ -598,9 +597,9 @@ void polyz0_unpack(poly *r, const uint8_t *a) {
 *                hi[i] = round_half_up(a[i] / alpha_r)
 *                lo[i] = a[i] - hi[i] * alpha_r  in [-alpha_r/2, alpha_r/2)
 *
-*              HighBits feed the unified rANS stream; the tight bound
-*              |hi|_inf <= ceil((11*sigma + tau*eta)/alpha_r) ensures
-*              they always lie inside the rANS vocab.
+*              HighBits feed the unified rANS stream. The encoder checks
+*              the configured radius ceil((11*sigma + tau*eta)/alpha_r)
+*              and reports OOV to the signer.
 *              LowBits are bit-packed at ALPHA_R_BITS = 6 bits/coef.
 *
 *              Uses arithmetic right shift (sign-preserving) on signed
@@ -617,7 +616,7 @@ void polyz1_split(int32_t *hi, int32_t *lo, const poly *a) {
     int32_t z = a->coeffs[i];
     int32_t h = (z + SHUTTLE_HALF_ALPHA_R) >> SHUTTLE_ALPHA_R_BITS;
     hi[i] = h;
-    lo[i] = z - (h << SHUTTLE_ALPHA_R_BITS);
+    lo[i] = z - h * SHUTTLE_ALPHA_R;
   }
 }
 
@@ -625,13 +624,12 @@ void polyz1_split(int32_t *hi, int32_t *lo, const poly *a) {
 * Name:        polyz1_combine
 *
 * Description: Inverse of polyz1_split: a[i] = hi[i] * alpha_r + lo[i].
-*              alpha_r is a power of two, so the recombination is a
-*              shift-and-add and is exact.
+*              The multiplication is exact over the supported bounds.
 **************************************************/
 void polyz1_combine(poly *a, const int32_t *hi, const int32_t *lo) {
   unsigned int i;
   for(i = 0; i < SHUTTLE_N; ++i)
-    a->coeffs[i] = (hi[i] << SHUTTLE_ALPHA_R_BITS) + lo[i];
+    a->coeffs[i] = hi[i] * SHUTTLE_ALPHA_R + lo[i];
 }
 
 /*************************************************
@@ -654,7 +652,7 @@ void polyz0_split(int32_t *hi, int32_t *lo, const poly *a) {
     int32_t z = a->coeffs[i];
     int32_t h = (z + SHUTTLE_HALF_ALPHA_0P) >> SHUTTLE_ALPHA_0P_BITS;
     hi[i] = h;
-    lo[i] = z - (h << SHUTTLE_ALPHA_0P_BITS);
+    lo[i] = z - h * SHUTTLE_ALPHA_0P;
   }
 }
 
@@ -666,7 +664,7 @@ void polyz0_split(int32_t *hi, int32_t *lo, const poly *a) {
 void polyz0_combine(poly *a, const int32_t *hi, const int32_t *lo) {
   unsigned int i;
   for(i = 0; i < SHUTTLE_N; ++i)
-    a->coeffs[i] = (hi[i] << SHUTTLE_ALPHA_0P_BITS) + lo[i];
+    a->coeffs[i] = hi[i] * SHUTTLE_ALPHA_0P + lo[i];
 }
 
 /*************************************************

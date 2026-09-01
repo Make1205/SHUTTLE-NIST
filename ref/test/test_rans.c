@@ -79,8 +79,20 @@ static int test_small(void) {
   int rc = shuttle_rans_encode(buf, &out_len, sizeof buf, msg, 10);
   if (rc != 0) FAIL("encode failed (rc=%d)", rc);
 
+  {
+    int32_t bad = R_SYM_MAX + 1;
+    rc = shuttle_rans_encode(buf, &out_len, sizeof buf, &bad, 1);
+    if (rc != -1) FAIL("OOV encode returned %d, expected -1", rc);
+  }
+
+  rc = shuttle_rans_encode(buf, &out_len, sizeof buf, msg, 10);
+  if (rc != 0) FAIL("second encode failed (rc=%d)", rc);
   rc = shuttle_rans_decode(dec, 10, buf, out_len);
   if (rc != 0) FAIL("decode failed (rc=%d)", rc);
+
+  buf[out_len] = 0;
+  rc = shuttle_rans_decode(dec, 10, buf, out_len + 1);
+  if (rc == 0) FAIL("decoder accepted trailing input (rc=%d)", rc);
 
   for (unsigned i = 0; i < 10; ++i)
     if (dec[i] != msg[i])

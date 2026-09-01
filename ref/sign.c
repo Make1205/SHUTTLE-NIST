@@ -3,8 +3,8 @@
  *
  * Mod 2q commitment + CompressY on slot 0 (alpha_1 stretch) + MakeHint /
  * UseHint for the z_2 portion. The on-wire signature is produced by
- * pack_sig (packing.c), which entropy-codes Z_0, HighBits(z[1..L]) and
- * hint h with three independent rANS tables.
+ * pack_sig (packing.c), which entropy-codes HighBits(z^(0..L)) and hint h
+ * with one merged rANS stream and bit-packs the corresponding LowBits.
  */
 
 #include <stdint.h>
@@ -80,23 +80,6 @@ static void compute_seed_c(uint8_t seed_c[SHUTTLE_CTILDEBYTES],
   shake256_absorb(&state, rho, SHUTTLE_SEEDBYTES);
   shake256_finalize(&state);
   shake256_squeeze(seed_c, SHUTTLE_CTILDEBYTES, &state);
-}
-
-static void build_c_eff(poly *c_eff,
-                           const uint8_t seed_c[SHUTTLE_CTILDEBYTES],
-                           const int8_t irs_signs[SHUTTLE_TAU])
-{
-  poly c;
-  unsigned int i, j;
-  poly_challenge(&c, seed_c);
-  for(i = 0; i < SHUTTLE_N; ++i) c_eff->coeffs[i] = 0;
-  j = 0;
-  for(i = 0; i < SHUTTLE_N && j < SHUTTLE_TAU; ++i) {
-    if(c.coeffs[i] != 0) {
-      c_eff->coeffs[i] = (int32_t)irs_signs[j];
-      j++;
-    }
-  }
 }
 
 /* ============================================================
@@ -175,7 +158,6 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
   polyvec sk_full, y, z;
   polyveck comY, w_h, z_2;
   poly c_poly;
-  int8_t irs_signs[SHUTTLE_TAU];
   int64_t norm_sq;
   unsigned int i, j, n;
   unsigned int nonce = 0;
@@ -187,7 +169,7 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
   unpack_sk(rho, tr, key, &s, &e, sk);
   build_sk_full(&sk_full, &s, &e);
 
-  int64_t gamma_q62 = polyvec_sq_norm(&sk_full) * ((int64_t)1 << 47);
+  int64_t gamma_q62 = polyvec_sq_norm(&sk_full) * SHUTTLE_INV_2SIGMA2_Q62;
   int64_t ln_M_q62  = 0;
 
   compute_mu(mu, tr, m, mlen);
@@ -273,8 +255,8 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
       shake256_absorb(&rng_state, irs_seed, sizeof(irs_seed));
       shake256_finalize(&rng_state);
 
-      irs_ok = irs_sign_with_signs(&z, irs_signs, &c_poly, &sk_full,
-                                    gamma_q62, ln_M_q62, &rng_state);
+      irs_ok = irs_sign(&z, &c_poly, &sk_full,
+                        gamma_q62, ln_M_q62, &rng_state);
     }
     if(!irs_ok) continue;
 
@@ -296,7 +278,7 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
     polyveck_make_hint_mod2q(&h, &comY, &z_2);
 
     /* Reject on rANS OOV / overflow (signer restarts IRS with fresh y). */
-    int rc = pack_sig(sig, seed_c, irs_signs, z_1, &h);
+    int rc = pack_sig(sig, seed_c, z_1, &h);
     if(rc != 0) continue;
 
     *siglen = SHUTTLE_BYTES;
@@ -317,21 +299,20 @@ int crypto_sign_verify(const uint8_t *sig, size_t siglen,
   uint8_t seed_c[SHUTTLE_CTILDEBYTES];
   uint8_t seed_c_prime[SHUTTLE_CTILDEBYTES];
   uint8_t w_0_prime_bitmap[SHUTTLE_M * SHUTTLE_N / 8];
-  int8_t irs_signs[SHUTTLE_TAU];
   polyveck b, a_gen_hat, b_hat;
   polyveck A_gen_hat[SHUTTLE_L];
   poly z_1[1 + SHUTTLE_L];
   polyveck h;
   polyveck tilde_w, w_h;
   polyveck w_0_prime_poly;
-  poly c_eff;
+  poly c;
   unsigned int i, j;
 
   if(siglen != SHUTTLE_BYTES)
     return -1;
 
   unpack_pk(rho, &b, pk);
-  if(unpack_sig(seed_c, irs_signs, z_1, &h, sig))
+  if(unpack_sig(seed_c, z_1, &h, sig))
     return -1;
 
   shake256(tr, SHUTTLE_TRBYTES, pk, SHUTTLE_PUBLICKEYBYTES);
@@ -352,9 +333,12 @@ int crypto_sign_verify(const uint8_t *sig, size_t siglen,
     polyveck_ntt(&b_hat);
   }
 
-  build_c_eff(&c_eff, seed_c, irs_signs);
+  /* Each IRS update direction is +/-1, which has the same parity. The mod-2q
+   * verification equation therefore uses the canonical challenge generated
+   * from seed_c and does not need a serialized sign vector. */
+  poly_challenge(&c, seed_c);
 
-  compute_tilde_w_mod2q(&tilde_w, &a_gen_hat, A_gen_hat, &b_hat, z_1, &c_eff);
+  compute_tilde_w_mod2q(&tilde_w, &a_gen_hat, A_gen_hat, &b_hat, z_1, &c);
 
   polyveck_lsb_extract(w_0_prime_bitmap, &tilde_w);
   polyveck_lsb_from_bitmap(&w_0_prime_poly, w_0_prime_bitmap);

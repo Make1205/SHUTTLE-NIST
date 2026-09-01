@@ -16,8 +16,9 @@
  *    E_table  <= 2^-63   (T[j] rounded to nearest Q63)
  *    E_mul    <= 2^-62   (one mulh64 truncation in Step 5)
  *    E_shift  <= 2^-64 / exp(-a)  (round-to-nearest output)
- *  Combined: 2^-58 (a-independent) + E_shift; worst-case a~7.37 -> 2^-53.3
- *  meeting the K=53 relative-precision target with ~0.3 bit margin.
+ *  Combined: about 2^-58 (a-independent) + E_shift.
+ *  Current worst case a~10.28 gives E_shift <= about 2^-49.17;
+ *  the sampler analysis accounts for this pointwise tail error.
  */
 
 #ifndef SHUTTLE_APPROX_EXP_CONSTANTS_H
@@ -79,22 +80,22 @@ static const uint64_t APPROX_EXP_TABLE_T[APPROX_EXP_B] = {
  *   |E_aq60|/exp(-a)  <= 2^{-59}
  * ============================================================ */
 
-/* SHUTTLE-NIST-120: sigma = 67, 2*sigma^2 = 8978,  I has 67 bits. */
+/* SHUTTLE-NIST-120: sigma = 70, 2*sigma^2 = 9800,  I has 67 bits. */
 #if SHUTTLE_NIST_MODE == 120
-#  define APPROX_EXP_I_HI  UINT64_C(7)
-#  define APPROX_EXP_I_LO  UINT64_C(5527037375615804616)
+#  define APPROX_EXP_I_HI  UINT64_C(6)
+#  define APPROX_EXP_I_LO  UINT64_C(12679313069439544865)
 #endif
 
-/* SHUTTLE-NIST-180: sigma = 79, 2*sigma^2 = 12482,  I has 67 bits. */
+/* SHUTTLE-NIST-180: sigma = 82, 2*sigma^2 = 13448,  I has 67 bits. */
 #if SHUTTLE_NIST_MODE == 180
-#  define APPROX_EXP_I_HI  UINT64_C(5)
-#  define APPROX_EXP_I_LO  UINT64_C(4619814290531650244)
+#  define APPROX_EXP_I_HI  UINT64_C(4)
+#  define APPROX_EXP_I_LO  UINT64_C(16109351755030114082)
 #endif
 
-/* SHUTTLE-NIST-255: sigma = 90, 2*sigma^2 = 16200,  I has 67 bits. */
+/* SHUTTLE-NIST-255: sigma = 99, 2*sigma^2 = 19602,  I has 66 bits. */
 #if SHUTTLE_NIST_MODE == 255
-#  define APPROX_EXP_I_HI  UINT64_C(4)
-#  define APPROX_EXP_I_LO  UINT64_C(838074298657421604)
+#  define APPROX_EXP_I_HI  UINT64_C(3)
+#  define APPROX_EXP_I_LO  UINT64_C(6333363310685913803)
 #endif
 
 #endif /* SHUTTLE_APPROX_EXP_CONSTANTS_H */

@@ -5,9 +5,9 @@
  * SHUTTLE-NIST parameter-set selector.
  *
  * Valid values (classical security level in bits):
- *   120 - SHUTTLE-NIST-120 (n=256, q=32257, sigma=67)
- *   180 - SHUTTLE-NIST-180 (n=256, q=15361, sigma=79)
- *   255 - SHUTTLE-NIST-255 (n=256, q=7681,  sigma=90)
+ *   120 - SHUTTLE-NIST-120 (n=256, q=32257, sigma=70)
+ *   180 - SHUTTLE-NIST-180 (n=256, q=15361, sigma=82)
+ *   255 - SHUTTLE-NIST-255 (n=256, q=7681,  sigma=99)
  *
  * Override at build time with: -DSHUTTLE_NIST_MODE=120|180|255
  * ============================================================ */
@@ -38,11 +38,11 @@
  * ============================================================ */
 #ifndef SHUTTLE_SIGMA
 #  if SHUTTLE_NIST_MODE == 120
-#    define SHUTTLE_SIGMA 67
+#    define SHUTTLE_SIGMA 70
 #  elif SHUTTLE_NIST_MODE == 180
-#    define SHUTTLE_SIGMA 79
+#    define SHUTTLE_SIGMA 82
 #  elif SHUTTLE_NIST_MODE == 255
-#    define SHUTTLE_SIGMA 90
+#    define SHUTTLE_SIGMA 99
 #  endif
 #endif
 

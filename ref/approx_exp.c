@@ -1,11 +1,9 @@
 /*
  * approx_exp.c - Fixed-point exp(-a) for the SHUTTLE rejection sampler.
  *
- * A six-step "exp(+)" pipeline with parameters chosen so the relative
- * precision matches the K = 53 security target across all SHUTTLE
- * parameter sets:
+ * A six-step "exp(+)" pipeline for the SHUTTLE rejection sampler:
  *
- *   Input:  a_q60 -- Q60 fixed-point, a in [0, 11*ln2) ~ [0, 7.624)
+ *   Input:  a_q60 -- Q60 fixed-point, a in [0, 11)
  *   Output: round(exp(-a) * 2^63) -- Q63 unsigned (in [0, 2^63])
  *
  * The mathematical identity exploited is
@@ -38,9 +36,10 @@
  *      E_mul    <= 2^-62   (one mulh64 truncation in Step 5)
  *      E_shift  <= 2^-64 / exp(-a)
  *
- * The first five terms are a-independent and sum to ~2^-58. E_shift
- * grows with a; at the worst case a ~ 7.37 (SHUTTLE-NIST-255) it dominates
- * at ~2^-53.3, still leaving ~0.3 bit of margin over K = 53.
+ * The first five terms are a-independent and sum to about 2^-58. E_shift
+ * grows with a. Across the current tables, a_max is about 10.28 (mode 120),
+ * where output quantization contributes at most about 2^-49.17 relative
+ * error. This pointwise tail error is accounted for by the sampler analysis.
  *
  * Constant-time guarantees: there is no data-dependent control flow.
  *   - Step 1 has no division, only mulh64 + add + shift.
@@ -116,7 +115,7 @@ uint64_t approx_exp(uint64_t a_q60) {
      *                          =  floor((B*a/ln2) * 2^53).
      * The next "+(2^53 - 1)) >> 53" converts floor to ceiling.
      *
-     * Both summands (a_q60 < 2^63 and RCP < 2^63) are < 2^64, so the
+     * Both summands (a_q60 < 11*2^60 < 2^64 and RCP < 2^63) fit uint64_t, so the
      * 128-bit intermediate is fully captured by the standard mulh64
      * primitive.
      * -------------------------------------------------------------- */
@@ -140,8 +139,8 @@ uint64_t approx_exp(uint64_t a_q60) {
      * and a final  >> beta  shift drops it to Q64.
      *
      * Sizes (worst case across all SHUTTLE modes):
-     *   m * LB         <  372 * 2^63.47  <  2^72.4
-     *   a_q60 << 9     <  2^63 * 2^9     =  2^72
+     *   m * LB         <  507 * 2^63.47  <  2^72.5
+     *   a_q60 << 9     <  11 * 2^69      <  2^72.5
      *   R              <  2^68.5   (=> well within 128 bits)
      *   X = R >> beta  <  2^64     (Q64, fits uint64 exactly)
      * -------------------------------------------------------------- */

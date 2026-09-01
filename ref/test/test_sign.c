@@ -2,15 +2,15 @@
  * test_sign.c - end-to-end tests for the SHUTTLE-NIST sign / verify
  * flow with rANS-compressed signature packing (Z_0 + HighBits(z[1..L]) + h).
  *
- * Expected signature sizes (tools/SigSize.py predicts):
- *   NIST-120: 1096 B
- *   NIST-180: 1426 B
- *   NIST-255: 1985 B
+ * Expected signature sizes (tools/SigSize.py):
+ *   NIST-120: 1175 B
+ *   NIST-180: 1589 B
+ *   NIST-255: 2013 B
  *
  * Tests:
  *   1. Key generation.
  *   2. Sign + verify roundtrip.
- *   3. Forgery detection (bit-flip in signature + message tampering).
+ *   3. Forgery and non-canonical encoding detection.
  *   4. 100-round stress test with random messages.
  *   5. Combined crypto_sign / crypto_sign_open.
  */
@@ -27,6 +27,17 @@
 
 #define MLEN_MAX 256
 #define NROUNDS  100
+
+#if SHUTTLE_NIST_MODE == 120
+#  define EXPECTED_SIG_BYTES 1175
+#  define LEGACY_SIG_BYTES   1156
+#elif SHUTTLE_NIST_MODE == 180
+#  define EXPECTED_SIG_BYTES 1589
+#  define LEGACY_SIG_BYTES   1570
+#else
+#  define EXPECTED_SIG_BYTES 2013
+#  define LEGACY_SIG_BYTES   1995
+#endif
 
 static void print_hex(const char *label, const uint8_t *data, size_t len)
 {
@@ -47,6 +58,12 @@ int main(void)
   size_t siglen, mlen;
   int ret;
   unsigned int i;
+
+  if(SHUTTLE_BYTES != EXPECTED_SIG_BYTES) {
+    printf("FAIL: SHUTTLE_BYTES=%d, expected %d\n",
+           SHUTTLE_BYTES, EXPECTED_SIG_BYTES);
+    return 1;
+  }
 
   printf("=== SHUTTLE Functional Test ===\n\n");
   printf("Parameters:\n");
@@ -84,21 +101,66 @@ int main(void)
   if(ret != 0) { printf("  FAIL: valid signature rejected (ret=%d)\n", ret); return 1; }
   printf("  Verification: PASS\n\n");
 
-  /* ---- Test 3: Forgery Detection ---- */
-  printf("[Test 3] Forgery detection...\n");
+  /* ---- Test 3: Forgery / canonical-encoding detection ---- */
+  printf("[Test 3] Forgery and canonical-encoding detection...\n");
   {
-    /* Flip a bit inside c_tilde (= seed_c). This is the most robust forgery
-     * detection point because c_tilde is the input to compute_seed_c on the
-     * verifier side, and the hash recomputation provides cryptographic
-     * binding for every mode. Flipping inside c_tilde sidesteps the
-     * separate, pre-existing caveat that the verifier's tilde_w only
-     * depends on c_eff via a parity LSB (see rounding.c::lift_to_2q). */
+    /* Flip a bit inside c_tilde (= seed_c). */
     uint8_t sig_bad[SHUTTLE_BYTES];
     memcpy(sig_bad, sig, SHUTTLE_BYTES);
     sig_bad[5] ^= 0x01;
     ret = crypto_sign_verify(sig_bad, SHUTTLE_BYTES, msg, mlen, pk);
     if(ret == 0) { printf("  FAIL: forged signature accepted!\n"); return 1; }
     printf("  Forged sig rejected (ret=%d)\n", ret);
+  }
+  {
+    const size_t off_rans_len = SHUTTLE_CTILDEBYTES;
+    const size_t off_rans_data = off_rans_len + 2;
+    size_t rans_len = (size_t)sig[off_rans_len]
+                    | ((size_t)sig[off_rans_len + 1] << 8);
+    if(rans_len >= SHUTTLE_RANS_RESERVED_BYTES) {
+      printf("  FAIL: no rANS padding available for canonicality test\n");
+      return 1;
+    }
+
+    uint8_t sig_bad[SHUTTLE_BYTES];
+    memcpy(sig_bad, sig, sizeof sig_bad);
+    sig_bad[off_rans_data + rans_len] = 1;
+    ret = crypto_sign_verify(sig_bad, SHUTTLE_BYTES, msg, mlen, pk);
+    if(ret == 0) { printf("  FAIL: nonzero rANS padding accepted\n"); return 1; }
+    printf("  Nonzero rANS padding rejected (ret=%d)\n", ret);
+
+    memcpy(sig_bad, sig, sizeof sig_bad);
+    ++rans_len;
+    sig_bad[off_rans_len] = (uint8_t)rans_len;
+    sig_bad[off_rans_len + 1] = (uint8_t)(rans_len >> 8);
+    ret = crypto_sign_verify(sig_bad, SHUTTLE_BYTES, msg, mlen, pk);
+    if(ret == 0) { printf("  FAIL: extended rANS input accepted\n"); return 1; }
+    printf("  Extended rANS input rejected (ret=%d)\n", ret);
+  }
+  {
+    /* Previous sign-bearing wire formats are rejected by their length. */
+    ret = crypto_sign_verify(sig, LEGACY_SIG_BYTES, msg, mlen, pk);
+    if(ret == 0) { printf("  FAIL: legacy signature length accepted\n"); return 1; }
+    printf("  Legacy signature length rejected (ret=%d)\n", ret);
+  }
+  {
+    const size_t off_rans_data = SHUTTLE_CTILDEBYTES + 2;
+    uint8_t sig_bad[SHUTTLE_BYTES];
+    memcpy(sig_bad, sig, sizeof sig_bad);
+    sig_bad[off_rans_data + 10] ^= 1;
+    ret = crypto_sign_verify(sig_bad, SHUTTLE_BYTES, msg, mlen, pk);
+    if(ret == 0) { printf("  FAIL: corrupted rANS payload accepted\n"); return 1; }
+    printf("  Corrupted rANS payload rejected (ret=%d)\n", ret);
+  }
+  {
+    const size_t off_z0_lo = SHUTTLE_CTILDEBYTES + 2
+                           + SHUTTLE_RANS_RESERVED_BYTES;
+    uint8_t sig_bad[SHUTTLE_BYTES];
+    memcpy(sig_bad, sig, sizeof sig_bad);
+    sig_bad[off_z0_lo] ^= 1;
+    ret = crypto_sign_verify(sig_bad, SHUTTLE_BYTES, msg, mlen, pk);
+    if(ret == 0) { printf("  FAIL: corrupted low bits accepted\n"); return 1; }
+    printf("  Corrupted low bits rejected (ret=%d)\n", ret);
   }
   {
     uint8_t msg_bad[MLEN_MAX];

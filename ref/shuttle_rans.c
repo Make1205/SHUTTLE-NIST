@@ -11,11 +11,10 @@
  * little-endian. Decoding reads the leading 4 little-endian bytes to
  * prime the state, then walks the stream.
  *
- * Final-state check on decode: after the last symbol is consumed, x must
- * equal L_ren (= 2^23).
+ * Canonical decode checks: after the last symbol is consumed, x must equal
+ * L_ren (= 2^23) and the input must be consumed exactly.
  */
 
-#include <assert.h>
 #include <string.h>
 
 #include "params.h"
@@ -102,8 +101,8 @@ static void rans_ctx_init(rans_ctx_t *ctx) {
 /* Map a signed integer symbol to its index in ctx->syms. */
 static inline int sym_to_index(const rans_ctx_t *ctx, int32_t sym) {
     int32_t idx = sym - ctx->sym_min;
-    assert(idx >= 0 && idx < (int32_t)ctx->num_syms);
-    assert(ctx->syms[idx] == sym);
+    if (idx < 0 || idx >= (int32_t)ctx->num_syms || ctx->syms[idx] != sym)
+        return -1;
     return (int)idx;
 }
 
@@ -125,6 +124,7 @@ static int encode_core(rans_ctx_t *ctx,
 
     for (idx_i = n; idx_i > 0; --idx_i) {
         int si = sym_to_index(ctx, syms[idx_i - 1]);
+        if (si < 0) return -1;
 
         uint32_t freq  = ctx->freqs[si];
         uint32_t start = ctx->cdf[si];
@@ -190,7 +190,7 @@ static int decode_core(rans_ctx_t *ctx,
         }
     }
 
-    if (x != SHUTTLE_RANS_L) return -1;
+    if (x != SHUTTLE_RANS_L || pos != in_len) return -1;
 
     return 0;
 }

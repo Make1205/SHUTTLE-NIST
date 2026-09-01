@@ -1,5 +1,6 @@
 # Build artifacts
 ref/test/out/
+ref/vector/bin/
 ref/vector/*.kat
 ref/vector/*.rsp
 ref/vector/gen_vectors_*

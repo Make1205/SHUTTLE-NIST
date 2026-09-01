@@ -141,7 +141,7 @@ static void write_verify_header(FILE *f)
     fprintf(f, "# `expected` is `accept` (rc == 0) or `reject` (rc != 0).\n");
     fprintf(f, "# Subcases per round:\n");
     fprintf(f, "#   original     : untampered (sig,msg) -> accept\n");
-    fprintf(f, "#   sig_tampered : one bit flipped in the rANS Z_0 region -> reject\n");
+    fprintf(f, "#   sig_tampered : one bit flipped in the rANS payload -> reject\n");
     fprintf(f, "#   msg_tampered : MSB flipped on msg[0]                 -> reject\n\n");
 }
 
@@ -240,10 +240,9 @@ int main(int argc, char **argv)
         fprintf(f_vf, "sig = ");    hex_fprint(f_vf, sig, siglen); fprintf(f_vf, "\n");
         fprintf(f_vf, "expected = accept\n\n");
 
-        /* b) bit-flip inside the rANS Z_0 area (offset chosen per
-         *    test_sign.c Test 3: c_tilde + irs_signs + 10) -> reject */
+        /* b) bit-flip inside the rANS payload -> reject */
         memcpy(sig_bad, sig, siglen);
-        size_t flip_off = (size_t)SHUTTLE_CTILDEBYTES + SHUTTLE_IRS_SIGNBYTES + 10;
+        size_t flip_off = (size_t)SHUTTLE_CTILDEBYTES + 2 + 10;
         if (flip_off >= siglen) flip_off = siglen / 2;
         sig_bad[flip_off] ^= 0x01;
         if (crypto_sign_verify(sig_bad, siglen, msg, mlen, pk) == 0) {

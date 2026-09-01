@@ -4,12 +4,13 @@ rANS reservation sizing.
 
 Signature structure (single merged rANS stream)
 -----------------------------------------------
-    sigma = seedC || irs_signs || rANS(HighBits(z^(0..lenS)) || hint)
+    sigma = seedC || rANS(HighBits(z^(0..lenS)) || hint)
                   || polyz0_lo_pack || L * polyz1_lo_pack
 
-HighBits(z) and hint share a single rANS context. The parameter set
-takes alpha_h = 2*alpha_r = 128 so that sigma_hint = sigma_z-hi =
-r/alpha_r and one frequency table covers both.
+HighBits(z) and hint share a single rANS context. Their scales are
+comparable, but their PMFs are not identical: HighBits(z) is a rounded
+discrete Gaussian and hint follows a bucket-crossing distribution. The
+single table is generated from their coefficient-count-weighted mixture.
 
 Per-component Shannon entropy (bit/coef, continuous-Gaussian
 approximation):
@@ -32,7 +33,7 @@ Total entropy (bytes, including seedC):
 Actual rANS-encoded bytes exceed the Shannon lower bound slightly due to:
   - probability quantization (t = 10 bit frequency rounding);
   - 4 B flush + 2 B length prefix per stream;
-  - tail margin Delta (sized by Gauss CLT at p_rans* = 2^-20).
+  - tail margin Delta (sized by Gauss CLT at p_rans* = 2^-30).
 """
 
 import math
@@ -50,7 +51,7 @@ SHUTTLE_NIST_PARAMS: Dict[str, dict] = {
         "lenE":    2,
         "eta":     1,
         "tau":     58,
-        "r":       67,
+        "r":       70,
         "alpha_1": 8,
         "alpha_h": 128,
         "T_sigma": 11,
@@ -63,7 +64,7 @@ SHUTTLE_NIST_PARAMS: Dict[str, dict] = {
         "lenE":    3,
         "eta":     1,
         "tau":     80,
-        "r":       79,
+        "r":       82,
         "alpha_1": 8,
         "alpha_h": 128,
         "T_sigma": 11,
@@ -76,7 +77,7 @@ SHUTTLE_NIST_PARAMS: Dict[str, dict] = {
         "lenE":    4,
         "eta":     1,
         "tau":     128,
-        "r":       90,
+        "r":       99,
         "alpha_1": 16,
         "alpha_h": 128,
         "T_sigma": 11,
@@ -287,6 +288,40 @@ def quantized_pmf(sigma: float, t: int, M_voc: int) -> Tuple[Dict[int, float], D
     return p, g
 
 
+def quantize_pmf(p: Dict[int, float], t: int) -> Dict[int, int]:
+    """Quantize an arbitrary PMF to positive rANS frequencies."""
+    quanta = 2 ** t
+    g = {k: max(1, round(prob * quanta)) for k, prob in p.items()}
+    diff = quanta - sum(g.values())
+    if diff != 0:
+        kmax = max(g.keys(), key=lambda k: g[k])
+        g[kmax] += diff
+    return g
+
+
+def round_half_up_ratio(x: int, step: int) -> int:
+    """Integer round-half-up of x/step, matching the C implementation."""
+    return math.floor((x + step // 2) / step)
+
+
+def rounded_response_pmf(r: float, step: int, M_voc: int,
+                         inner_step: int = 0,
+                         T_sigma: float = 11.0) -> Dict[int, float]:
+    """PMF of one response symbol after the implementation's rounding."""
+    bound = int(T_sigma * r)
+    weights = {x: math.exp(-x * x / (2 * r * r))
+               for x in range(-bound, bound + 1)}
+    Z = sum(weights.values())
+    pmf = {s: 0.0 for s in range(-M_voc, M_voc + 1)}
+    for x, weight in weights.items():
+        y = x if inner_step == 0 else round_half_up_ratio(x, inner_step)
+        symbol = round_half_up_ratio(y, step)
+        if symbol in pmf:
+            pmf[symbol] += weight / Z
+    total = sum(pmf.values())
+    return {s: probability / total for s, probability in pmf.items()}
+
+
 def hint_pmf_correct(r: float, alpha_h: int, M_voc: int,
                      T_sigma: float = 11.0) -> Dict[int, float]:
     """True MakeHint output PMF (bucket-crossing model).
@@ -368,7 +403,7 @@ def rans_rate_and_var(p: Dict[int, float], g: Dict[int, int], t: int) -> Tuple[f
 
 
 def gauss_reservation(n_b: int, E_ell: float, var_ell: float, p_star: float) -> Tuple[float, float, float]:
-    """Gauss CLT model: R = mu_b + Phi^{-1}(1 - p_star) * sigma_b.
+    """Gauss CLT model: R = mu_b - Phi^{-1}(p_star) * sigma_b.
 
     Returns (mu_b, sigma_b, R) in bytes:
       mu_b = n_b * E_ell / 8 + 4   (4 = flush bytes)
@@ -376,7 +411,9 @@ def gauss_reservation(n_b: int, E_ell: float, var_ell: float, p_star: float) -> 
     """
     mu_b    = n_b * E_ell / 8.0 + 4.0
     sigma_b = math.sqrt(n_b * var_ell) / 8.0
-    R       = mu_b + phi_inv(1 - p_star) * sigma_b
+    # Using the lower-tail quantile directly avoids losing p_star in the
+    # subtraction 1-p_star for targets below machine epsilon.
+    R       = mu_b - phi_inv(p_star) * sigma_b
     return mu_b, sigma_b, R
 
 
@@ -515,7 +552,7 @@ def compute_two_stream_reservation(p: dict, p_rans_star: float = 2**-20) -> dict
     """Two-stream (z-hi + hint) reservation, with the per-stream budget
     split evenly: p_k = p_rans_star / 2 (union bound).
 
-    The vocabulary radii M_voc come from the theoretical tight bounds.
+    The vocabulary radii M_voc come from the configured 11r design bounds.
     """
     n        = p["n"]
     lenS     = p["lenS"]
@@ -558,12 +595,11 @@ def compute_two_stream_reservation(p: dict, p_rans_star: float = 2**-20) -> dict
     }
 
 
-def compute_merged_reservation(p: dict, p_rans_star: float = 2**-20) -> dict:
+def compute_merged_reservation(p: dict, p_rans_star: float = 2**-30) -> dict:
     """SHUTTLE-NIST single-stream design: one rANS stream encoding
-    HighBits(z^(0..lenS)) || hint, all at sigma = r/alpha_r.
-
-    Requires alpha_h = 2*alpha_r so that sigma_hint = 2r/alpha_h =
-    r/alpha_r = sigma_z-hi.
+    HighBits(z^(0..lenS)) || hint. The table and capacity calculation use
+    the coefficient-count-weighted mixture of the rounded-response and
+    bucket-crossing PMFs.
     """
     n        = p["n"]
     lenS     = p["lenS"]
@@ -578,35 +614,63 @@ def compute_merged_reservation(p: dict, p_rans_star: float = 2**-20) -> dict:
     t        = p.get("t", 10)
 
     if alpha_h != 2 * alpha_r:
-        # The merged-stream design requires alpha_h = 2*alpha_r so that
-        # sigma_hint = sigma_z-hi. For parameter sets that violate this,
-        # return None and let the caller skip the merged-stream table.
+        # This utility currently covers the deployed parameter family, in
+        # which alpha_h = 2*alpha_r keeps the two constituent scales close.
         return None
 
     By = T_sigma * r
     alpha_0p = alpha_r // alpha_1
     sigma = r / alpha_r
 
-    # M_voc = max of the three tight bounds (z^(0) hi, z^(>=1) hi, hint).
+    # M_voc is the maximum of the three configured 11r-based design radii.
+    # Out-of-vocabulary probability is accounted for separately.
     M_voc_zi = math.ceil((By + tau * eta) / alpha_r)
     M_voc_z0 = math.ceil((math.ceil(By / alpha_1) + 1) / alpha_0p)
     M_voc_h  = (2 * (By + tau * eta)) // alpha_h + 1
     M_voc = max(M_voc_zi, M_voc_z0, M_voc_h, 1)
 
-    n_b = n * (lenS + 1 + lenE)
-    res = reservation_auto(n_b, sigma, t, p_rans_star, M_voc)
+    p_z0 = rounded_response_pmf(r, alpha_0p, M_voc,
+                                inner_step=alpha_1,
+                                T_sigma=T_sigma)
+    p_zi = rounded_response_pmf(r, alpha_r, M_voc,
+                                T_sigma=T_sigma)
+    p_h = hint_pmf_correct(r, alpha_h, M_voc, T_sigma=T_sigma)
+
+    block_count = 1 + lenS + lenE
+    p_mix = {
+        s: (p_z0[s] + lenS * p_zi[s] + lenE * p_h[s]) / block_count
+        for s in p_z0
+    }
+    g_mix = quantize_pmf(p_mix, t)
+
+    E_z0, V_z0 = rans_rate_and_var(p_z0, g_mix, t)
+    E_zi, V_zi = rans_rate_and_var(p_zi, g_mix, t)
+    E_h, V_h = rans_rate_and_var(p_h, g_mix, t)
+
+    n_b = n * block_count
+    mu_b = n * (E_z0 + lenS * E_zi + lenE * E_h) / 8.0 + 4.0
+    sigma_b = math.sqrt(n * (V_z0 + lenS * V_zi + lenE * V_h)) / 8.0
+    R_bytes = math.ceil(mu_b - phi_inv(p_rans_star) * sigma_b)
+    res = {
+        "model": "gauss-mixture",
+        "mu_b": mu_b,
+        "sigma_b": sigma_b,
+        "R_bytes": R_bytes,
+    }
 
     return {
         "stream":     res,
         "M_voc":      M_voc,
         "n_b":        n_b,
         "sigma":      sigma,
+        "pmf":        p_mix,
+        "freqs":      g_mix,
         "R_bytes":    res["R_bytes"],
         "p_rans_star": p_rans_star,
     }
 
 
-def compute_entropy_decomposition(p: dict, p_rans_star: float = 2**-20) -> dict:
+def compute_entropy_decomposition(p: dict, p_rans_star: float = 2**-30) -> dict:
     """SHUTTLE-NIST single-stream byte breakdown:
 
       mu_b         merged rANS body (including the single 4 B flush)
@@ -614,13 +678,11 @@ def compute_entropy_decomposition(p: dict, p_rans_star: float = 2**-20) -> dict:
       lo_zi_B      n * lenS * log2(alpha_r) / 8     (bit-pack)
       len_prefix   2 B (one stream)
       seedC        32/48/64 B
-      irs_sign     ceil(tau/8) B
       Delta        R - mu_b (single-stream tail margin)
       actual sig   expected + Delta
     """
     n        = p["n"]
     lenS     = p["lenS"]
-    tau      = p["tau"]
     alpha_1  = p["alpha_1"]
     alpha_r  = p.get("alpha_r", 64)
     alpha_0p = alpha_r // alpha_1
@@ -635,9 +697,8 @@ def compute_entropy_decomposition(p: dict, p_rans_star: float = 2**-20) -> dict:
     lo_z0_B   = n * math.log2(alpha_0p) / 8
     lo_zi_B   = n * lenS * math.log2(alpha_r) / 8
     len_pref  = 2               # one merged stream * 2 B
-    irs_signB = (tau + 7) // 8  # IRS per-step sign bits
     expected_sig = (mu_b + lo_z0_B + lo_zi_B
-                    + len_pref + seedC_B + irs_signB)
+                    + len_pref + seedC_B)
     delta_total = rs["R_bytes"] - mu_b
     actual_sig  = expected_sig + delta_total
 
@@ -647,7 +708,6 @@ def compute_entropy_decomposition(p: dict, p_rans_star: float = 2**-20) -> dict:
         "lo_zi_B":      lo_zi_B,
         "len_prefix_B": len_pref,
         "seedC_B":      seedC_B,
-        "irs_signB":    irs_signB,
         "expected_sig": expected_sig,
         "delta_total":  delta_total,
         "actual_sig":   actual_sig,
@@ -658,7 +718,7 @@ def compute_entropy_decomposition(p: dict, p_rans_star: float = 2**-20) -> dict:
     }
 
 
-def print_entropy_table(p: dict, p_rans_star: float = 2**-20) -> None:
+def print_entropy_table(p: dict, p_rans_star: float = 2**-30) -> None:
     """Print the per-component byte breakdown (single-stream design).
 
     If the parameter set does not satisfy alpha_h = 2*alpha_r, skip.
@@ -676,7 +736,6 @@ def print_entropy_table(p: dict, p_rans_star: float = 2**-20) -> None:
     print(f"  {'LowBits z^(1..lenS) bit-pack (n*lenS*log2(alpha_r)/8)':<54} {e['lo_zi_B']:>10.2f}")
     print(f"  {'Length prefix (2 B)':<54} {e['len_prefix_B']:>10}")
     print(f"  {'seedC':<54} {e['seedC_B']:>10}")
-    print(f"  {'IRS sign bits (ceil(tau/8) B)':<54} {e['irs_signB']:>10}")
     print(f"  {'-'*54} {'-'*10}")
     print(f"  {'Expected sig length (with quantization, no Delta)':<54} {e['expected_sig']:>10.2f}")
     print(f"  {'-'*54} {'-'*10}")
@@ -687,7 +746,7 @@ def print_entropy_table(p: dict, p_rans_star: float = 2**-20) -> None:
 
 def print_reservation_table(p: dict) -> None:
     """Print the single-stream reservation at three p_ovf_star targets."""
-    out_sample = compute_merged_reservation(p, 2**-20)
+    out_sample = compute_merged_reservation(p, 2**-30)
     if out_sample is None:
         return
     print(f"\n  rANS reservation (single merged stream):")
@@ -695,7 +754,7 @@ def print_reservation_table(p: dict) -> None:
           f"sigma = {out_sample['sigma']:.4f}")
     print(f"  {'p_rans_star':<14} {'model':<8} {'mu_b':>8} {'sigma_b':>9} {'R(B)':>6}")
     print(f"  {'-'*14} {'-'*8} {'-'*8} {'-'*9} {'-'*6}")
-    for p_star in (2**-10, 2**-20, 2**-40):
+    for p_star in (2**-20, 2**-30, 2**-40):
         out = compute_merged_reservation(p, p_star)
         rs = out["stream"]
         print(f"  2^{int(math.log2(p_star)):<12} {rs['model']:<8} "
@@ -726,7 +785,7 @@ def print_one_mode(name: str, p: dict) -> None:
           f" {res['total_B_physical']:+8.2f} B")
     # rANS-implementation byte breakdown (with flush, length prefix,
     # quantization and seedC included).
-    print_entropy_table(p, p_rans_star=2**-20)
+    print_entropy_table(p, p_rans_star=2**-30)
 
     # Reservation comparison across three p_rans^* targets.
     print_reservation_table(p)

@@ -3,10 +3,11 @@
 
 Background:
 
-  The SHUTTLE-NIST parameter set takes alpha_h = 2*alpha_r = 128 across
-  all three modes, so sigma_hint = 2r/alpha_h = r/alpha_r = sigma_z-hi.
-  Hint and z-hi therefore share the same discrete-Gaussian PMF and a
-  SINGLE rANS context encodes both.
+  A SINGLE rANS context encodes HighBits(z^(0..lenS)) and hint.  These
+  blocks have comparable scales but not identical distributions: the
+  response blocks are rounded discrete Gaussians, while MakeHint follows
+  a bucket-crossing distribution.  The table is therefore generated from
+  their coefficient-count-weighted mixture.
 
   Vocabulary radius:
     M_voc = max(
@@ -20,7 +21,8 @@ Background:
   over just two terms.
 
 Quantization procedure:
-  1. PMF eval: p(s) ~ exp(-s^2 / (2 sigma^2)) on [-M_voc, M_voc].
+  1. PMF eval: compute the rounded-response and bucket-crossing PMFs on
+     [-M_voc, M_voc], then form their coefficient-count-weighted mixture.
   2. Round: g(s) = max(1, round(p(s) * 2^t)) with t = 10.
   3. Slack: adjust the largest bucket so sum(g) = 2^t exactly.
 
@@ -34,16 +36,16 @@ from __future__ import annotations
 import argparse
 import math
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 MODE_PARAMS: Dict[int, dict] = {
     120: {"n": 256, "lenS": 3, "lenE": 2, "eta": 1, "tau":  58,
-          "r":  67, "alpha_1":  8, "alpha_h": 128},
+          "r":  70, "alpha_1":  8, "alpha_h": 128},
     180: {"n": 256, "lenS": 4, "lenE": 3, "eta": 1, "tau":  80,
-          "r":  79, "alpha_1":  8, "alpha_h": 128},
+          "r":  82, "alpha_1":  8, "alpha_h": 128},
     255: {"n": 256, "lenS": 5, "lenE": 4, "eta": 1, "tau": 128,
-          "r":  90, "alpha_1": 16, "alpha_h": 128},
+          "r":  99, "alpha_1": 16, "alpha_h": 128},
 }
 
 ALPHA_R = 64         # cross-mode constant
@@ -57,6 +59,72 @@ def theoretical_pmf(sigma: float, M_voc: int) -> Dict[int, float]:
                for k in range(-M_voc, M_voc + 1)}
     Z = sum(weights.values())
     return {k: w / Z for k, w in weights.items()}
+
+
+def round_half_up_ratio(x: int, step: int) -> int:
+    """Integer round-half-up of x/step, matching the C implementation."""
+    return math.floor((x + step // 2) / step)
+
+
+def rounded_response_pmf(r: int, step: int, M_voc: int,
+                         inner_step: Optional[int] = None) -> Dict[int, float]:
+    """PMF after the response coefficient is rounded into an rANS symbol.
+
+    For z^(i), i >= 1, ``inner_step`` is absent and the map is
+    RoundHU(x/alpha_r).  For z^(0), CompressY first applies
+    RoundHU(x/alpha_1), after which the rANS split applies
+    RoundHU(./alpha_0').
+    """
+    bound = T_SIGMA * r
+    weights = {x: math.exp(-x * x / (2 * r * r))
+               for x in range(-bound, bound + 1)}
+    Z = sum(weights.values())
+    pmf = {s: 0.0 for s in range(-M_voc, M_voc + 1)}
+    for x, weight in weights.items():
+        y = x if inner_step is None else round_half_up_ratio(x, inner_step)
+        symbol = round_half_up_ratio(y, step)
+        if symbol in pmf:
+            pmf[symbol] += weight / Z
+    total = sum(pmf.values())
+    return {s: probability / total for s, probability in pmf.items()}
+
+
+def hint_pmf(r: int, alpha_h: int, M_voc: int) -> Dict[int, float]:
+    """Bucket-crossing PMF of one centered MakeHint coefficient."""
+    bound = T_SIGMA * r
+    weights = {z: math.exp(-z * z / (2 * r * r))
+               for z in range(-bound, bound + 1)}
+    Z = sum(weights.values())
+    pmf = {h: 0.0 for h in range(-M_voc, M_voc + 1)}
+    for z, weight in weights.items():
+        delta = 2.0 * z / alpha_h
+        k = math.floor(delta + 0.5)
+        frac = delta - k
+        if k in pmf:
+            pmf[k] += (weight / Z) * (1.0 - abs(frac))
+        if abs(frac) > 1e-15:
+            adjacent = k + (1 if frac > 0 else -1)
+            if adjacent in pmf:
+                pmf[adjacent] += (weight / Z) * abs(frac)
+    total = sum(pmf.values())
+    return {h: probability / total for h, probability in pmf.items()}
+
+
+def merged_symbol_pmf(params: dict, M_voc: int) -> Dict[int, float]:
+    """Coefficient-count-weighted PMF of the merged rANS stream."""
+    r = params["r"]
+    lenS, lenE = params["lenS"], params["lenE"]
+    alpha_1, alpha_h = params["alpha_1"], params["alpha_h"]
+    alpha_0p = ALPHA_R // alpha_1
+    p_z0 = rounded_response_pmf(r, alpha_0p, M_voc,
+                                inner_step=alpha_1)
+    p_zi = rounded_response_pmf(r, ALPHA_R, M_voc)
+    p_h = hint_pmf(r, alpha_h, M_voc)
+    block_count = 1 + lenS + lenE
+    return {
+        s: (p_z0[s] + lenS * p_zi[s] + lenE * p_h[s]) / block_count
+        for s in p_z0
+    }
 
 
 def quantize(pmf: Dict[int, float], prob_bits: int) -> Tuple[List[int], List[int]]:
@@ -78,13 +146,16 @@ def quantize(pmf: Dict[int, float], prob_bits: int) -> Tuple[List[int], List[int
 def merged_table(params: dict) -> Tuple[List[int], List[int], float, int]:
     """Single shared rANS table for HighBits(z) || hint.
 
-    sigma = r/alpha_r (the common scale shared by z-hi and hint under the
-    new alpha_h = 2*alpha_r parameter choice).
+    The table probabilities are obtained from the actual rounded-response
+    and bucket-crossing models, weighted by their coefficient counts.
 
-    M_voc covers the tight l_infty bounds of:
+    M_voc is the configured 11r-based design radius obtained from:
       - HighBits_{alpha_r}(z^(i)), i >= 1:  ceil((11r + tau*eta)/alpha_r)
       - HighBits_{alpha_0'}(z^(0)):         ceil((ceil(11r/alpha_1)+1)/alpha_0')
-      - hint h (since alpha_h = 2*alpha_r): same as the z^(i>=1) bound
+      - hint h: floor(2(11r + tau*eta)/alpha_h) + 1
+
+    Symbols outside this design vocabulary are rejected by the encoder;
+    their probability is accounted for separately from capacity overflow.
     """
     r = params["r"]
     tau, eta = params["tau"], params["eta"]
@@ -95,7 +166,7 @@ def merged_table(params: dict) -> Tuple[List[int], List[int], float, int]:
     M_voc_z0 = math.ceil((math.ceil(T_SIGMA * r / alpha_1) + 1) / alpha_0p)
     M_voc_h  = (2 * (T_SIGMA * r + tau * eta)) // params["alpha_h"] + 1
     M_voc = max(M_voc_zi, M_voc_z0, M_voc_h)
-    syms, freqs = quantize(theoretical_pmf(sigma, M_voc), PROB_BITS)
+    syms, freqs = quantize(merged_symbol_pmf(params, M_voc), PROB_BITS)
     return syms, freqs, sigma, M_voc
 
 
@@ -114,7 +185,7 @@ def emit_table_block(mode: int,
           file=file)
     print(f"/*   prob_bits = {prob_bits}, sum(freqs) = {prob_total}.                */",
           file=file)
-    print(f"/* Generated by tools/gen_rans_tables.py from the theoretical PMF.    */",
+    print(f"/* Generated by tools/gen_rans_tables.py from the analytic mixture PMF. */",
           file=file)
     print(f"/* ================================================================ */",
           file=file)
@@ -142,13 +213,13 @@ def emit_header(modes: List[int], file) -> None:
     print(" * Auto-generated by SHUTTLE-NIST/tools/gen_rans_tables.py.", file=file)
     print(" *", file=file)
     print(" * SHUTTLE-NIST uses design S (single merged rANS stream): HighBits", file=file)
-    print(" * of z^(0..lenS) and hint h share the same discrete-Gaussian PMF", file=file)
-    print(" * at sigma = r/alpha_r, because the new parameter set takes", file=file)
-    print(" * alpha_h = 2*alpha_r = 128 across all modes (sigma_hint = sigma_zhi).", file=file)
+    print(" * of z^(0..lenS) and hint h use one coefficient-count-weighted", file=file)
+    print(" * mixture table. Response symbols use their exact rounded", file=file)
+    print(" * discrete-Gaussian marginals and hints use the bucket-crossing PMF.", file=file)
     print(" *", file=file)
-    print(" * Tables come from the theoretical discrete Gaussian PMF; the", file=file)
-    print(" * alphabet is the |.|_inf <= max(M_voc terms) tight bound, so OOV", file=file)
-    print(" * is mathematically impossible.", file=file)
+    print(" * Tables come from the analytic mixture PMF; the", file=file)
+    print(" * alphabet uses the configured max(M_voc terms) design bound; the", file=file)
+    print(" * encoder rejects any symbol outside this range.", file=file)
     print(" *", file=file)
     print(" * Do not edit by hand -- regenerate with:", file=file)
     print(" *   python3 SHUTTLE-NIST/tools/gen_rans_tables.py --out SHUTTLE-NIST/ref/rans_tables.h", file=file)

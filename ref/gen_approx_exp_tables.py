@@ -57,9 +57,9 @@ I_SHIFT = 80
 # ============================================================
 SHUTTLE_NIST_MODES = [
     # (security, sigma, 2*sigma^2)
-    (120, 67,  2 * 67 * 67),    # SHUTTLE-NIST-120 -> 8978
-    (180, 79,  2 * 79 * 79),    # SHUTTLE-NIST-180 -> 12482
-    (255, 90,  2 * 90 * 90),    # SHUTTLE-NIST-255 -> 16200
+    (120, 70,  2 * 70 * 70),    # SHUTTLE-NIST-120 -> 9800
+    (180, 82,  2 * 82 * 82),    # SHUTTLE-NIST-180 -> 13448
+    (255, 99,  2 * 99 * 99),    # SHUTTLE-NIST-255 -> 19602
 ]
 
 
@@ -148,8 +148,9 @@ def main():
     lines.append(f' *    E_table  <= 2^-63   (T[j] rounded to nearest Q63)')
     lines.append(f' *    E_mul    <= 2^-62   (one mulh64 truncation in Step 5)')
     lines.append(f' *    E_shift  <= 2^-64 / exp(-a)  (round-to-nearest output)')
-    lines.append(f' *  Combined: 2^-58 (a-independent) + E_shift; worst-case a~7.37 -> 2^-53.3')
-    lines.append(f' *  meeting the K=53 relative-precision target with ~0.3 bit margin.')
+    lines.append(f' *  Combined: about 2^-58 (a-independent) + E_shift.')
+    lines.append(f' *  Current worst case a~10.28 gives E_shift <= about 2^-49.17;')
+    lines.append(f' *  the sampler analysis accounts for this pointwise tail error.')
     lines.append(f' */')
     lines.append(f'')
     lines.append(f'#ifndef SHUTTLE_APPROX_EXP_CONSTANTS_H')

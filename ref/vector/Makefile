@@ -19,19 +19,23 @@ SOURCES = $(SRC_DIR)/fips202.c $(SRC_DIR)/symmetric-shake.c \
 
 NROUNDS ?= 10
 
-.PHONY: all build vectors vectors-128 vectors-256 clean clean-bin clean-vectors
+.PHONY: all build vectors vectors-120 vectors-180 vectors-255 clean clean-bin clean-vectors
 
-# Default: build both modes and produce the vector files.
+# Default: build all modes and produce the vector files.
 all: vectors
 
-build: bin/gen_vectors_mode128 bin/gen_vectors_mode256
+build: bin/gen_vectors_mode120 bin/gen_vectors_mode180 bin/gen_vectors_mode255
 
-bin/gen_vectors_mode128: gen_vectors.c rng.c rng.h $(SOURCES) | bin
+bin/gen_vectors_mode120: gen_vectors.c rng.c rng.h $(SOURCES) | bin
 	$(CC) $(CFLAGS_BASE) -DSHUTTLE_NIST_MODE=120 \
 	    -o $@ gen_vectors.c rng.c $(SOURCES) $(LDLIBS)
 
-bin/gen_vectors_mode256: gen_vectors.c rng.c rng.h $(SOURCES) | bin
+bin/gen_vectors_mode180: gen_vectors.c rng.c rng.h $(SOURCES) | bin
 	$(CC) $(CFLAGS_BASE) -DSHUTTLE_NIST_MODE=180 \
+	    -o $@ gen_vectors.c rng.c $(SOURCES) $(LDLIBS)
+
+bin/gen_vectors_mode255: gen_vectors.c rng.c rng.h $(SOURCES) | bin
+	$(CC) $(CFLAGS_BASE) -DSHUTTLE_NIST_MODE=255 \
 	    -o $@ gen_vectors.c rng.c $(SOURCES) $(LDLIBS)
 
 bin:
@@ -39,13 +43,16 @@ bin:
 
 # Run each mode's generator. Output files land directly in this
 # directory (ref/vector/) so they're easy to ship alongside the source.
-vectors: vectors-128 vectors-256
+vectors: vectors-120 vectors-180 vectors-255
 
-vectors-128: bin/gen_vectors_mode128
-	./bin/gen_vectors_mode128 . $(NROUNDS)
+vectors-120: bin/gen_vectors_mode120
+	./bin/gen_vectors_mode120 . $(NROUNDS)
 
-vectors-256: bin/gen_vectors_mode256
-	./bin/gen_vectors_mode256 . $(NROUNDS)
+vectors-180: bin/gen_vectors_mode180
+	./bin/gen_vectors_mode180 . $(NROUNDS)
+
+vectors-255: bin/gen_vectors_mode255
+	./bin/gen_vectors_mode255 . $(NROUNDS)
 
 clean: clean-bin
 
@@ -53,5 +60,6 @@ clean-bin:
 	rm -rf bin
 
 clean-vectors:
-	rm -f keygen_mode128.kat sign_mode128.kat verify_mode128.kat \
-	      keygen_mode256.kat sign_mode256.kat verify_mode256.kat
+	rm -f keygen_mode120.kat sign_mode120.kat verify_mode120.kat \
+	      keygen_mode180.kat sign_mode180.kat verify_mode180.kat \
+	      keygen_mode255.kat sign_mode255.kat verify_mode255.kat

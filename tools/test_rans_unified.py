@@ -5,9 +5,8 @@ Coverage:
   1. The single merged frequency table produced by gen_rans_tables.py is
      well-formed for every mode: alphabet contiguous and symmetric, freqs
      sum to 2^prob_bits, every symbol has freq >= 1. M_voc matches the
-     theoretical tight bound (max of HighBits(z^(0)), HighBits(z^(>=1)),
-     hint bounds).
-  2. Python reference rans.py round-trips a discrete-Gaussian sample.
+     configured 11r-based design radius.
+  2. Python reference rans.py round-trips samples from the merged PMF.
   3. Final-state verification rejects any single-byte corruption of the
      encoded stream.
   4. Little-endian flush of the initial state is bit-exact.
@@ -29,7 +28,7 @@ sys.path.insert(0, str(HERE))
 
 from rans import RansTable, encode, decode, RANS_L
 from gen_rans_tables import (MODE_PARAMS, ALPHA_R, PROB_BITS, T_SIGMA,
-                             merged_table, theoretical_pmf)
+                             merged_symbol_pmf, merged_table)
 
 
 def check_table(syms, freqs, prob_bits):
@@ -44,12 +43,12 @@ def check_table(syms, freqs, prob_bits):
 
 
 def test_tables():
-    print("== Test: theoretical PMF tables, geometry and sums ==")
+    print("== Test: analytic mixture-PMF tables, geometry and sums ==")
     for mode, params in MODE_PARAMS.items():
         syms, freqs, sigma, M = merged_table(params)
         check_table(syms, freqs, PROB_BITS)
 
-        # M_voc tight bound (max over z^(0) hi, z^(>=1) hi, hint).
+        # M_voc design radius (max over z^(0) hi, z^(>=1) hi, hint).
         r, tau, eta = params["r"], params["tau"], params["eta"]
         alpha_1, alpha_h_spec = params["alpha_1"], params["alpha_h"]
         alpha_0p = ALPHA_R // alpha_1
@@ -64,9 +63,8 @@ def test_tables():
               f"sigma={sigma:.4f})")
 
 
-def discrete_gaussian_sample(rng: random.Random, sigma: float, M_voc: int) -> int:
-    """Sample from the discrete Gaussian PMF (same one the generator uses)."""
-    pmf = theoretical_pmf(sigma, M_voc)
+def sample_pmf(rng: random.Random, pmf) -> int:
+    """Sample from a finite PMF."""
     syms = sorted(pmf.keys())
     weights = [pmf[s] for s in syms]
     cum = 0.0
@@ -79,14 +77,15 @@ def discrete_gaussian_sample(rng: random.Random, sigma: float, M_voc: int) -> in
 
 
 def test_roundtrip():
-    print("== Test: theoretical-Gaussian sample -> encode -> decode ==")
+    print("== Test: analytic merged-PMF sample -> encode -> decode ==")
     rng = random.Random(0xC0DECAFE)
     for mode, params in MODE_PARAMS.items():
         syms, freqs, sigma, M_voc = merged_table(params)
         table = RansTable(syms=list(syms), freqs=list(freqs),
                           prob_bits=PROB_BITS)
         N = 1024
-        msg = [discrete_gaussian_sample(rng, sigma, M_voc) for _ in range(N)]
+        pmf = merged_symbol_pmf(params, M_voc)
+        msg = [sample_pmf(rng, pmf) for _ in range(N)]
         buf = encode(msg, table)
         recovered = decode(buf, table, len(msg))
         assert recovered == msg, \
@@ -121,7 +120,8 @@ def test_corruption_detected():
     syms, freqs, sigma, M_voc = merged_table(params)
     table = RansTable(syms=list(syms), freqs=list(freqs), prob_bits=PROB_BITS)
     N = 200
-    msg = [discrete_gaussian_sample(rng, sigma, M_voc) for _ in range(N)]
+    pmf = merged_symbol_pmf(params, M_voc)
+    msg = [sample_pmf(rng, pmf) for _ in range(N)]
     buf = encode(msg, table)
     undetected = 0
     for pos in range(len(buf)):

@@ -193,8 +193,8 @@ static int test_zhi_pipeline(void) {
     polyz1_lo_pack(z1_lo_bufs[k], lo_scratch);
   }
 
-  /* Sanity: every hi value must already lie in the vocabulary by the
-   * 11-sigma tight bound. Our triangular sampler may sometimes overshoot,
+  /* Sanity: every hi value should lie in the configured vocabulary for
+   * this unit test. Our triangular sampler may sometimes overshoot,
    * so we clamp + recombine + re-split as the real signer would not. */
   unsigned clipped = 0;
   for (unsigned i = 0; i < (SHUTTLE_L + 1) * SHUTTLE_N; ++i) {

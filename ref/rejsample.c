@@ -15,7 +15,7 @@
  * All operations are constant-time to prevent side-channel leakage.
  *
  * Key parameters (all driven by params.h via SHUTTLE_NIST_MODE):
- *   - sigma  = SHUTTLE_SIGMA  (67/79/90 for SHUTTLE-NIST-120/180/255)
+ *   - sigma  = SHUTTLE_SIGMA  (70/82/99 for SHUTTLE-NIST-120/180/255)
  *   - N      = SHUTTLE_N      (256 for all NIST modes)
  *   - VECLEN = SHUTTLE_VECLEN (= 1 + L + M = 6/8/10)
  *   - tau    = SHUTTLE_TAU    (58/80/128)
@@ -31,13 +31,8 @@
  * Constants
  * ============================================================ */
 
-/* Number of IntervalParity iterations. Must be exactly 37 for security.
- * SHUTTLE-NIST uses smaller sigma (r=67/79/90) than legacy SHUTTLE, so
- * the IntervalParity walk converges in 37 steps. */
+/* Number of IntervalParity iterations. Must be exactly 37 for security. */
 #define IRS_PARITY_STEPS  37
-
-/* sigma^2, derived from the mode. */
-#define SIGMA_SQ          ((uint32_t)SHUTTLE_SIGMA * (uint32_t)SHUTTLE_SIGMA)
 
 /* ============================================================
  * Constant-time helpers
@@ -59,15 +54,6 @@ static inline int64_t ct_neg_mask_i64(int64_t x) {
     return x >> 63;
 }
 
-/*
- * ct_select_i32 - Constant-time select: returns a if sel==0, b if sel==1.
- * sel must be 0 or 1.
- */
-static inline int32_t ct_select_i32(int32_t a, int32_t b, uint32_t sel) {
-    int32_t mask = -(int32_t)sel;  /* 0 if sel=0, -1 if sel=1 */
-    return a ^ (mask & (a ^ b));
-}
-
 /* ============================================================
  * IntervalParity
  *
@@ -81,12 +67,12 @@ static inline int32_t ct_select_i32(int32_t a, int32_t b, uint32_t sel) {
  *   delta_inc = 2 * gamma
  *   c_{k+1} = c_k + inc; inc += delta_inc
  *
- * For each step k=0..99, if ell_prime >= c_{k+1}, flip parity.
+ * For each of the 37 configured steps, if ell_prime >= c_{k+1}, flip parity.
  *
  * All comparisons use uint64_t to handle potential overflow safely
  * (unsigned wrapping gives correct comparison for our value range).
  *
- * MUST run exactly 100 iterations (no early exit) for constant-time.
+ * MUST run exactly IRS_PARITY_STEPS iterations (no early exit).
  * ============================================================ */
 static int interval_parity(int64_t ell_prime, int64_t abs_u, int64_t gamma) {
     /*
@@ -205,8 +191,7 @@ static int irs_step(polyvec *z,
                     const polyvec *v,
                     int64_t gamma_q62,
                     int64_t ln_M_q62,
-                    uint64_t r_rand,
-                    int32_t *out_sign_update) {
+                    uint64_t r_rand) {
     /*
      * Step 1: Compute u = <z, v> / sigma^2 in Q62.
      *
@@ -215,7 +200,7 @@ static int irs_step(polyvec *z,
      *                        = inner * SHUTTLE_INV_SIGMA2_Q62.
      *
      * For SHUTTLE parameters, |inner| can reach ~2e8 (Cauchy-Schwarz bound)
-     * and SHUTTLE_INV_SIGMA2_Q62 is ~4e14 for sigma=101 (~2e14 for sigma=149),
+     * and SHUTTLE_INV_SIGMA2_Q62 is about 5e14--9e14 for these modes,
      * so the product can reach ~8e22. That overflows int64 (max ~9.2e18) but
      * we compute in __int128 and clamp: when |u| is very large the step
      * always rejects (signing restarts), so clamping is safe.
@@ -226,7 +211,7 @@ static int irs_step(polyvec *z,
     /* Constant-time saturating cast from int128 to int64.
      * Overflow happens when the upper 64 bits do not equal the sign
      * extension of the lower 64 bits. Two sign-bit masks select between
-     * INT64_MIN, low64, and INT64_MAX without branching. */
+     * -INT64_MAX, low64, and INT64_MAX without branching. */
     int64_t u_lo = (int64_t)u_wide;
     int64_t u_hi = (int64_t)(u_wide >> 64);
     int64_t u_hi_expected = u_lo >> 63;
@@ -234,7 +219,7 @@ static int irs_step(polyvec *z,
     int64_t neg_ovf_mask = (u_hi - u_hi_expected) >> 63;  /* -1 if u_hi < expected */
     int64_t u_q62 = (u_lo  & ~pos_ovf_mask & ~neg_ovf_mask)
                   | (INT64_MAX &  pos_ovf_mask)
-                  | (INT64_MIN &  neg_ovf_mask);
+                  | (-INT64_MAX & neg_ovf_mask);
 
     /* Step 2: Compute ell = -ln(r_rand) in Q62 */
     int64_t ell = approx_neg_ln(r_rand);
@@ -297,24 +282,13 @@ static int irs_step(polyvec *z,
         }
     }
 
-    /* Output the sign choice if requested */
-    if (out_sign_update)
-        *out_sign_update = sign_update;
-
     return 1;  /* accepted */
 }
 
 /* ============================================================
- * Internal IRS loop shared by irs_sign and irs_sign_with_signs.
- *
- * If out_signs is non-NULL, records the per-step sign choices.
- * The effective sign for step i is: out_signs[i] * c_i, where
- * c_i is the original challenge coefficient at position j_i.
- * This means the total perturbation is:
- *   sum_i out_signs[i] * c_i * x^{j_i} * sk
+ * Internal IRS loop.
  * ============================================================ */
 static int irs_loop(polyvec *z,
-                    int8_t *out_signs,
                     const poly *c,
                     const polyvec *sk_stretched,
                     int64_t gamma_q62,
@@ -362,22 +336,11 @@ static int irs_loop(polyvec *z,
                         | ((uint64_t)randbuf[6] << 48)
                         | ((uint64_t)randbuf[7] << 56);
 
-        /* Perform one IRS step, capturing the sign choice */
-        int32_t step_sign = 0;
-        int accepted = irs_step(z, &v, gamma_q62, ln_M_q62, r_rand,
-                                out_signs ? &step_sign : NULL);
+        /* Perform one IRS step. */
+        int accepted = irs_step(z, &v, gamma_q62, ln_M_q62, r_rand);
 
         if (!accepted) {
             return 0;  /* Rejection: caller must restart signing */
-        }
-
-        /* Record the sign choice if output buffer provided.
-         * step_sign is +1 or -1 (the IRS parity decision).
-         * v was already multiplied by c_sign, so the total perturbation
-         * for this step is step_sign * c_sign * x^{j} * sk.
-         * The effective challenge coefficient is step_sign * c_sign. */
-        if (out_signs) {
-            out_signs[step] = (int8_t)(step_sign * c_sign);
         }
     }
 
@@ -393,18 +356,5 @@ int irs_sign(polyvec *z,
              int64_t gamma_q62,
              int64_t ln_M_q62,
              keccak_state *rng_state) {
-    return irs_loop(z, NULL, c, sk_stretched, gamma_q62, ln_M_q62, rng_state);
-}
-
-/* ============================================================
- * irs_sign_with_signs - IRS loop that also outputs sign choices.
- * ============================================================ */
-int irs_sign_with_signs(polyvec *z,
-                        int8_t sign_choices[SHUTTLE_TAU],
-                        const poly *c,
-                        const polyvec *sk_stretched,
-                        int64_t gamma_q62,
-                        int64_t ln_M_q62,
-                        keccak_state *rng_state) {
-    return irs_loop(z, sign_choices, c, sk_stretched, gamma_q62, ln_M_q62, rng_state);
+    return irs_loop(z, c, sk_stretched, gamma_q62, ln_M_q62, rng_state);
 }

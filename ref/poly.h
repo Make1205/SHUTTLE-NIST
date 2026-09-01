@@ -88,8 +88,8 @@ void polyw1_pack(uint8_t *r, const poly *a);
  * Combine routines are exact inverses (step is a power of two, so the
  * split is round-trip perfect).
  *
- * No vocabulary check is needed here: with the 11*sigma SampleY
- * truncation, HighBits stays inside the rANS vocabulary tight bound.
+ * The split itself is lossless. The rANS encoder performs the configured
+ * vocabulary check and lets the signer restart on OOV.
  * ============================================================ */
 #define polyz1_split SHUTTLE_NAMESPACE(polyz1_split)
 void polyz1_split(int32_t *hi, int32_t *lo, const poly *a);

@@ -5,13 +5,13 @@
  *
  *   sigma | small  |  k  | RCDT bits |  entries  | parameter set
  *   ------+--------+-----+-----------+-----------+---------------
- *    67   | 1.0469 |  64 |   93      |    11     | SHUTTLE-NIST-120
- *    79   | 1.2344 |  64 |   93      |    13     | SHUTTLE-NIST-180
- *    90   | 1.4062 |  64 |   93      |    15     | SHUTTLE-NIST-255
+ *    70   | 1.09375  |  64 |   93      |    12     | SHUTTLE-NIST-120
+ *    82   | 1.28125  |  64 |   93      |    14     | SHUTTLE-NIST-180
+ *    99   | 1.546875 |  64 |   93      |    17     | SHUTTLE-NIST-255
  *
  * All three modes share the same k=64, 93-bit RCDT (3 x 31-bit limbs)
- * layout. Output: signed int16_t samples with |r| <= 11*sigma:
- *   sigma=67 -> 737, sigma=79 -> 869, sigma=90 -> 990.
+ * layout. The finite table gives hard support |r| <= 831/959/1151; the
+ * signature encoder separately enforces its configured 11*sigma vocabulary.
  *
  * Unified buffer design: one SHAKE-256 stream per sample_gauss_N call
  * produces ALL randomness, in repeating mini-batches.
@@ -20,6 +20,7 @@
 #include "sampler.h"
 #include "approx_exp.h"
 #include "approx_exp_constants.h"
+#include "rcdt_tables.h"
 #include <string.h>
 
 /* ============================================================
@@ -32,62 +33,6 @@
  * Entry i encodes Pr[|X_small_sigma| >= i+1] * 2^93 for the mode's
  * small_sigma.
  * ============================================================ */
-
-#if SHUTTLE_SIGMA == 67
-/* SHUTTLE-NIST-120: small_sigma = 1.0469, 11 entries, 93-bit precision.
- * R_241 = 1 + 2^(-95.55), R_inf = 1 + 2^(-89.71). */
-static const uint32_t RCDT_3x31[RCDT_ENTRIES][3] = {
-    {0x4778B7BAU, 0x3AD4C2CBU, 0x395D0EFEU},
-    {0x0587579EU, 0x46F607E2U, 0x0C9A2F23U},
-    {0x27D78F61U, 0x09ADE3CAU, 0x01365D62U},
-    {0x5BE1C32DU, 0x768A8E44U, 0x000C6D67U},
-    {0x24EB781AU, 0x3D4D813CU, 0x000033E7U},
-    {0x19E8EF98U, 0x48363C95U, 0x00000057U},
-    {0x496FEE03U, 0x1DBADB68U, 0x00000000U},
-    {0x7E997742U, 0x00081D40U, 0x00000000U},
-    {0x5FEC7E81U, 0x000000E3U, 0x00000000U},
-    {0x0503A6E6U, 0x00000000U, 0x00000000U},
-    {0x000016B2U, 0x00000000U, 0x00000000U}
-};
-#elif SHUTTLE_SIGMA == 79
-/* SHUTTLE-NIST-180: small_sigma = 1.2344, 13 entries, 93-bit precision.
- * R_361 = 1 + 2^(-93.76), R_inf = 1 + 2^(-89.06). */
-static const uint32_t RCDT_3x31[RCDT_ENTRIES][3] = {
-    {0x093D9B5BU, 0x43C2739EU, 0x4178E522U},
-    {0x2B60EF0EU, 0x3E4D7A47U, 0x146F92FBU},
-    {0x7B8A09CDU, 0x028ABCF5U, 0x039B90DAU},
-    {0x5B345B31U, 0x7A31FDF8U, 0x00587AD4U},
-    {0x218C0F73U, 0x3CDDB361U, 0x0004805AU},
-    {0x2B78CE0CU, 0x5B98FA0DU, 0x00001EC8U},
-    {0x6839942BU, 0x73ACA81DU, 0x0000006DU},
-    {0x469FE738U, 0x661BE347U, 0x00000000U},
-    {0x11ECAB98U, 0x0062989BU, 0x00000000U},
-    {0x6FC7E575U, 0x0000316EU, 0x00000000U},
-    {0x6E830A79U, 0x0000000CU, 0x00000000U},
-    {0x00DE52E7U, 0x00000000U, 0x00000000U},
-    {0x00000F92U, 0x00000000U, 0x00000000U}
-};
-#elif SHUTTLE_SIGMA == 90
-/* SHUTTLE-NIST-255: small_sigma = 1.4062, 15 entries, 93-bit precision.
- * R_511 = 1 + 2^(-93.88), R_inf = 1 + 2^(-88.67). */
-static const uint32_t RCDT_3x31[RCDT_ENTRIES][3] = {
-    {0x7FA41C82U, 0x7E0897B9U, 0x476C5504U},
-    {0x142B2B3CU, 0x1817F3ECU, 0x1B7CA058U},
-    {0x2EC1E6CFU, 0x5C033B85U, 0x06E8F000U},
-    {0x339216F2U, 0x0A968792U, 0x01192102U},
-    {0x4BAA6424U, 0x1214A738U, 0x001BB4E8U},
-    {0x3ADB1542U, 0x37B18CCEU, 0x0001ACA0U},
-    {0x0EB480EFU, 0x63BC55E1U, 0x00000FC6U},
-    {0x495FC076U, 0x17A34257U, 0x0000005AU},
-    {0x41796E7CU, 0x1C0209E3U, 0x00000001U},
-    {0x34D2DF92U, 0x01463540U, 0x00000000U},
-    {0x2E7EB4B5U, 0x00019BE2U, 0x00000000U},
-    {0x70C57416U, 0x00000139U, 0x00000000U},
-    {0x482919B5U, 0x00000000U, 0x00000000U},
-    {0x001403DEU, 0x00000000U, 0x00000000U},
-    {0x00000358U, 0x00000000U, 0x00000000U}
-};
-#endif
 
 /* ============================================================
  * sampler_sigma2: batched small-sigma CDT sampler.
@@ -111,8 +56,8 @@ int sampler_sigma2(int16_t *z_out, const uint8_t *rand) {
         for (int i = 0; i < RCDT_ENTRIES; i++) {
             uint32_t cc;
             cc = ct_lt_u32(v0, RCDT_3x31[i][0]);
-            cc = ct_lt_u32(v1 - cc, RCDT_3x31[i][1]);
-            cc = ct_lt_u32(v2 - cc, RCDT_3x31[i][2]);
+            cc = ct_lt_u32(v1, RCDT_3x31[i][1] + cc);
+            cc = ct_lt_u32(v2, RCDT_3x31[i][2] + cc);
             z += (int32_t)cc;
         }
         z_out[s] = (int16_t)z;
@@ -170,9 +115,9 @@ static void sampler_y(uint8_t y_out[GAUSS_BATCH], const uint8_t *rand) {
  *   total                  |a_q60 - a*2^60| <= 5/4 + 1 < 2   (Q60 ULP)
  *   propagation to exp(-a): <= 2 / 2^60 * exp(-a) = 2^-59 * exp(-a)
  *
- * For all three SHUTTLE-NIST modes (sigma in {67, 79, 90}), 2*sigma^2 is
+ * For all three SHUTTLE-NIST modes (sigma in {70, 82, 99}), 2*sigma^2 is
  * not a power of two so the Q80 reciprocal path always applies. Max
- * num <= 63 * (63 + 64*RCDT_ENTRIES) <= 63 * (63 + 64*15) = 64449 << 2^20;
+ * num <= 63 * (63 + 64*RCDT_ENTRIES) <= 63 * (63 + 64*17) = 72513 << 2^20;
  * the 128-bit product M fits comfortably.
  * ============================================================ */
 static int sample_gauss_attempt(int16_t *r,

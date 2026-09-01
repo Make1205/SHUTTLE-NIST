@@ -46,8 +46,7 @@
 /* Signature-layout offsets, identical to pack_sig's file-local defines
  * (design S: single merged rANS stream). */
 #define OFF_C_TILDE     0
-#define OFF_IRS_SIGNS   (OFF_C_TILDE + SHUTTLE_CTILDEBYTES)
-#define OFF_RANS_LEN    (OFF_IRS_SIGNS + SHUTTLE_IRS_SIGNBYTES)
+#define OFF_RANS_LEN    (OFF_C_TILDE + SHUTTLE_CTILDEBYTES)
 #define OFF_RANS_DATA   (OFF_RANS_LEN + 2)
 #define OFF_Z0_LO       (OFF_RANS_DATA + SHUTTLE_RANS_RESERVED_BYTES)
 #define OFF_Z1_LO       (OFF_Z0_LO + SHUTTLE_POLYZ0_LO_PACKEDBYTES)
@@ -172,7 +171,7 @@ static void print_legend(void)
          "       compute_seed_c = SHAKE-256(w_h || w_0_bitmap || mu || rho)\n"
          "       poly_challenge (SampleC from seed_c -> tau monomials)\n");
   printf("  5. IRS (iterative rejection sampling)\n"
-         "       irs_sign_with_signs: tau inner steps, each does\n"
+         "       irs_sign: tau inner steps, each does\n"
          "         - approx_neg_ln over the running log-domain score\n"
          "         - IntervalParity constant-time check\n"
          "         - inner-product update on sk_stretched\n"
@@ -183,7 +182,6 @@ static void print_legend(void)
          "       polyveck_make_hint_mod2q -> h\n");
   printf("  7. Pack plumbing (non-rANS parts of pack_sig)\n"
          "       seed_c memcpy into sig[OFF_C_TILDE]\n"
-         "       irs_signs -> bit-packed bitmap\n"
          "       z_1[0] polyz0_split + polyz0_lo_pack\n"
          "       z_1[1..L] polyz1_split + polyz1_lo_pack (L polys)\n"
          "       h -> int32 flat buffer\n"
@@ -245,7 +243,6 @@ int main(void)
     polyvec sk_full, y, z;
     polyveck comY, w_h, z_2;
     poly c_poly;
-    int8_t irs_signs[SHUTTLE_TAU];
     int64_t norm_sq;
     unsigned int i, j, n;
     unsigned int nonce = 0;
@@ -258,7 +255,7 @@ int main(void)
     c_start = cpucycles();
     unpack_sk(rho, tr, key, &s, &e, sk);
     build_sk_full(&sk_full, &s, &e);
-    int64_t gamma_q62 = polyvec_sq_norm(&sk_full) * ((int64_t)1 << 47);
+    int64_t gamma_q62 = polyvec_sq_norm(&sk_full) * SHUTTLE_INV_2SIGMA2_Q62;
     int64_t ln_M_q62  = 0;
 
     compute_mu_local(mu, tr, msg, sizeof msg);
@@ -345,8 +342,8 @@ int main(void)
         shake256_init(&rng_state);
         shake256_absorb(&rng_state, irs_seed, sizeof(irs_seed));
         shake256_finalize(&rng_state);
-        irs_ok = irs_sign_with_signs(&z, irs_signs, &c_poly, &sk_full,
-                                      gamma_q62, ln_M_q62, &rng_state);
+        irs_ok = irs_sign(&z, &c_poly, &sk_full,
+                          gamma_q62, ln_M_q62, &rng_state);
       }
       c_irs = cpucycles();
       run_irs = c_irs - c_challenge;
@@ -378,14 +375,9 @@ int main(void)
        * just like pack_sig in sign.c.
        */
 
-      /* 7a. header: c_tilde memcpy + irs_signs bitmap */
+      /* 7a. header: c_tilde memcpy */
       uint64_t plumb0 = cpucycles();
       memcpy(&sig[OFF_C_TILDE], seed_c, SHUTTLE_CTILDEBYTES);
-      memset(&sig[OFF_IRS_SIGNS], 0, SHUTTLE_IRS_SIGNBYTES);
-      for(i = 0; i < SHUTTLE_TAU; ++i) {
-        if(irs_signs[i] > 0)
-          sig[OFF_IRS_SIGNS + (i >> 3)] |= (uint8_t)(1u << (i & 7));
-      }
       /* 7b. Split z^(0) and z^(1..lenS) into the merged rANS input buffer
        *     and per-poly bit-packed lo arrays. Then append hint to the
        *     tail of the merged buffer. */

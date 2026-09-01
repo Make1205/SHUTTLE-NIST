@@ -11,8 +11,8 @@
 #include "../rejsample.h"
 #include "../poly.h"
 
-extern int pack_sig(uint8_t *, const uint8_t *, const int8_t *,
-                    const poly *, const polyveck *);
+extern int pack_sig(uint8_t *, const uint8_t *, const poly *,
+                    const polyveck *);
 
 int main(void) {
   uint8_t pk[SHUTTLE_PUBLICKEYBYTES];

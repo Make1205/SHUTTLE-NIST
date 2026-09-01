@@ -1,18 +1,16 @@
 # SHUTTLE Python Tooling
 
-Offline helpers for the SHUTTLE rANS layer: theoretical frequency-table
+Offline helpers for the SHUTTLE rANS layer: analytic frequency-table
 generation, a pure-Python reference encoder/decoder used to cross-check the
 C implementation, and a KAT comparator for byte-identical regression.
-
-The design rationale and all numeric targets live in
-`agent/rANS/SHUTTLE_rANS.tex`.
 
 ## Files
 
 | file | role |
 |---|---|
 | `rans.py` | Pure-Python rANS encoder/decoder (reference; cross-checks the C side). |
-| `gen_rans_tables.py` | Emit `ref/rans_tables.h` from the theoretical discrete Gaussian PMF. |
+| `gen_rans_tables.py` | Emit `ref/rans_tables.h` from the analytic merged PMF. |
+| `SigSize.py` | Recompute the signature-size decomposition and rANS reservations. |
 | `kat_compare/` | KAT regression helpers. |
 
 ## Dependencies
@@ -36,37 +34,37 @@ python3 rans.py
 
 ## Where the frequency tables come from
 
-We do *not* sample any empirical histogram. The discrete Gaussian PMF
-is evaluated analytically:
+We do *not* sample an empirical histogram. The constituent PMFs are
+evaluated analytically: response symbols use the exact rounded discrete-
+Gaussian marginal, and hints use the bucket-crossing distribution of
+`MakeHint`. The shared rANS table is their coefficient-count-weighted
+mixture.
 
-  z-hi context:  sigma = r / alpha_r,  M_voc = ceil((11*r + tau*eta)/alpha_r)
-  hint context:  sigma = 2r / alpha_h, M_voc = floor(2*(11*r + tau*eta)/alpha_h) + 1
-
-SampleY hard-truncates `|y_k| <= 11*sigma`, so the M_voc bound holds with
-probability 1 — the vocabulary covers every possible coefficient, and
-out-of-vocabulary failure is mathematically impossible (`p_OOV ≡ 0`).
-mode-128's `alpha_h = 2*alpha_r` makes `sigma_zhi == sigma_hint`, so a
-single shared table doubles as both contexts; mode-256/512 keep two
-separate tables.
+`M_voc` is derived from the configured `11*r` design bound. The C encoder
+also checks every symbol and returns an error outside the table alphabet;
+the signer treats that result as a restart condition.
+All three modes use `alpha_h = 2*alpha_r`, so the two blocks have comparable
+scales and can be encoded efficiently by one shared table; their PMFs are
+not assumed to be identical.
 
 Quantization is the standard "round each `p(s) * 2^t` to an integer,
 nudge the largest bucket to absorb the slack" recipe, with `t = 10`.
 
 ## Reservation budgets
 
-The per-stream byte reservations in `ref/params.h` come from
-`tools/SigSize.py::compute_two_stream_reservation` (Gauss CLT for z-hi,
-Poisson model for narrow-sigma hint streams in mode-256/512). Re-run it
-when changing any spec parameter — the numbers feed straight into
-`SHUTTLE_ZHI_RESERVED_BYTES` / `SHUTTLE_HINT_RESERVED_BYTES`.
+The merged-stream byte reservations in `ref/params.h` come from
+`tools/SigSize.py::compute_merged_reservation`. Re-run it when changing a
+parameter or regenerating the frequency table; the resulting value feeds
+`SHUTTLE_RANS_RESERVED_BYTES`. The implementation target is `2^-30`.
 
 ## rANS reference
 
 `rans.py` is a literal transliteration of the C engine. State is 32-bit,
 renormalization is byte-wise, the final-state flush is little-endian
 (matching ryg_rans / HAETAE), and the decoder verifies `x == RANS_L`
-after the last symbol — any byte-level corruption that survives the
-renorm loop will overwhelmingly land here.
+after the last symbol and requires exact input consumption. Signature
+unpacking additionally checks zero padding and re-encodes the symbols to
+enforce a unique byte representation.
 
 ```python
 from rans import RansTable, encode, decode

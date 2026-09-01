@@ -9,8 +9,8 @@
  *
  * Signature format (single merged rANS stream):
  *
- *   seedC || irs_signs
- *     || uint16 rans_len  || rANS(zhi || hint) + pad to RANS_RESERVED
+ *   seedC || uint16 rans_len
+ *     || rANS(zhi || hint) + pad to RANS_RESERVED
  *     || polyz0_lo_pack(lo(z^(0)))
  *     || L * polyz1_lo_pack(lo(z^(1..lenS)))
  *
@@ -23,15 +23,11 @@
  * The rANS block is a fixed-size slot (length prefix + encoded stream +
  * zero padding). The fixed slot is what lets the signature have a single
  * on-the-wire length. Reservation budget SHUTTLE_RANS_RESERVED_BYTES is
- * sized via Gauss CLT for overflow probability p_rans^* = 2^-20 (see
+ * sized via the codelength model for overflow probability p_rans^* = 2^-30 (see
  * tools/SigSize.py).
  *
- * IRS sign bits: TAU bits packed into IRS_SIGNBYTES bytes. Bit i is 1 if
- * irs_signs[i] == +1, 0 if irs_signs[i] == -1. Combined with the challenge
- * c (from c_tilde), these bits define c_eff = sum_i irs_sign_i * x^{j_i}.
- *
- * Encoder-side overflow returns rc = -2 from pack_sig; OOV is impossible
- * by construction (theoretical vocabulary covers the 11*sigma tight bound).
+ * Encoder-side OOV/overflow returns a negative code from pack_sig, and the
+ * signer restarts with fresh masking randomness.
  */
 
 #include <string.h>
@@ -139,8 +135,7 @@ void unpack_sk(uint8_t rho[SHUTTLE_SEEDBYTES],
  * ============================================================ */
 
 #define OFF_C_TILDE     0
-#define OFF_IRS_SIGNS   (OFF_C_TILDE + SHUTTLE_CTILDEBYTES)
-#define OFF_RANS_LEN    (OFF_IRS_SIGNS + SHUTTLE_IRS_SIGNBYTES)
+#define OFF_RANS_LEN    (OFF_C_TILDE + SHUTTLE_CTILDEBYTES)
 #define OFF_RANS_DATA   (OFF_RANS_LEN + 2)
 #define OFF_Z0_LO       (OFF_RANS_DATA + SHUTTLE_RANS_RESERVED_BYTES)
 #define OFF_Z1_LO       (OFF_Z0_LO + SHUTTLE_POLYZ0_LO_PACKEDBYTES)
@@ -149,7 +144,6 @@ void unpack_sk(uint8_t rho[SHUTTLE_SEEDBYTES],
 
 int pack_sig(uint8_t sig[SHUTTLE_BYTES],
              const uint8_t c_tilde[SHUTTLE_CTILDEBYTES],
-             const int8_t irs_signs[SHUTTLE_TAU],
              const poly *z_1,
              const polyveck *h)
 {
@@ -159,14 +153,7 @@ int pack_sig(uint8_t sig[SHUTTLE_BYTES],
   /* 1. seedC */
   memcpy(&sig[OFF_C_TILDE], c_tilde, SHUTTLE_CTILDEBYTES);
 
-  /* 2. irs_signs bitmap: bit i = 1 iff irs_signs[i] > 0. */
-  memset(&sig[OFF_IRS_SIGNS], 0, SHUTTLE_IRS_SIGNBYTES);
-  for(i = 0; i < SHUTTLE_TAU; ++i) {
-    if(irs_signs[i] > 0)
-      sig[OFF_IRS_SIGNS + (i >> 3)] |= (uint8_t)(1u << (i & 7));
-  }
-
-  /* 3. Split z^(0) and z^(1..lenS) into hi (rANS) + lo (bit-pack), and
+  /* 2. Split z^(0) and z^(1..lenS) into hi (rANS) + lo (bit-pack), and
    *    flatten the hint coefficients. The merged rANS input layout is:
    *      merged[0 .. n-1]                    = HighBits_{alpha_0'}(z^(0))
    *      merged[k*n .. (k+1)*n - 1]          = HighBits_{alpha_r}(z^(k)),
@@ -189,7 +176,7 @@ int pack_sig(uint8_t sig[SHUTTLE_BYTES],
     for(j = 0; j < SHUTTLE_N; ++j)
       merged[(SHUTTLE_L + 1 + i) * SHUTTLE_N + j] = h->vec[i].coeffs[j];
 
-  /* 4. rANS-encode the merged stream. */
+  /* 3. rANS-encode the merged stream. */
   size_t rans_len = 0;
   rc = shuttle_rans_encode(&sig[OFF_RANS_DATA], &rans_len,
                            SHUTTLE_RANS_RESERVED_BYTES,
@@ -207,7 +194,6 @@ int pack_sig(uint8_t sig[SHUTTLE_BYTES],
 }
 
 int unpack_sig(uint8_t c_tilde[SHUTTLE_CTILDEBYTES],
-               int8_t irs_signs[SHUTTLE_TAU],
                poly *z_1,
                polyveck *h,
                const uint8_t sig[SHUTTLE_BYTES])
@@ -218,19 +204,17 @@ int unpack_sig(uint8_t c_tilde[SHUTTLE_CTILDEBYTES],
   /* 1. seedC */
   memcpy(c_tilde, &sig[OFF_C_TILDE], SHUTTLE_CTILDEBYTES);
 
-  /* 2. irs_signs: bit 1 -> +1, bit 0 -> -1. */
-  for(i = 0; i < SHUTTLE_TAU; ++i) {
-    if((sig[OFF_IRS_SIGNS + (i >> 3)] >> (i & 7)) & 1)
-      irs_signs[i] = (int8_t)1;
-    else
-      irs_signs[i] = (int8_t)-1;
-  }
-
-  /* 3. Merged rANS decode. */
+  /* 2. Merged rANS decode. */
   size_t rans_len = (size_t)sig[OFF_RANS_LEN + 0]
                   | ((size_t)sig[OFF_RANS_LEN + 1] << 8);
   if(rans_len == 0 || rans_len > SHUTTLE_RANS_RESERVED_BYTES)
     return -1;
+
+  /* The fixed slot has a unique representation: every byte after the
+   * declared rANS stream must be zero. */
+  for(i = (unsigned int)rans_len; i < SHUTTLE_RANS_RESERVED_BYTES; ++i)
+    if(sig[OFF_RANS_DATA + i] != 0)
+      return -1;
 
   int32_t merged[MERGED_SYM_COUNT];
   rc = shuttle_rans_decode(merged, MERGED_SYM_COUNT,
@@ -238,12 +222,25 @@ int unpack_sig(uint8_t c_tilde[SHUTTLE_CTILDEBYTES],
   if(rc != 0)
     return rc;
 
-  /* 4. z^(0): combine hi (from merged stream) + lo (bit-packed). */
+  /* Re-encoding makes the rANS representation canonical, independently of
+   * decoder implementation details. */
+  {
+    uint8_t canonical[SHUTTLE_RANS_RESERVED_BYTES];
+    size_t canonical_len = 0;
+    rc = shuttle_rans_encode(canonical, &canonical_len,
+                             SHUTTLE_RANS_RESERVED_BYTES,
+                             merged, MERGED_SYM_COUNT);
+    if(rc != 0 || canonical_len != rans_len ||
+       memcmp(canonical, &sig[OFF_RANS_DATA], rans_len) != 0)
+      return -1;
+  }
+
+  /* 3. z^(0): combine hi (from merged stream) + lo (bit-packed). */
   int32_t lo_scratch[SHUTTLE_N];
   polyz0_lo_unpack(lo_scratch, &sig[OFF_Z0_LO]);
   polyz0_combine(&z_1[0], &merged[0], lo_scratch);
 
-  /* 5. z^(1..lenS): combine hi + lo. */
+  /* 4. z^(1..lenS): combine hi + lo. */
   for(i = 0; i < SHUTTLE_L; ++i) {
     polyz1_lo_unpack(lo_scratch,
                      &sig[OFF_Z1_LO + i * SHUTTLE_POLYZ1_LO_PACKEDBYTES]);
@@ -252,7 +249,7 @@ int unpack_sig(uint8_t c_tilde[SHUTTLE_CTILDEBYTES],
                    lo_scratch);
   }
 
-  /* 6. hint at the tail of merged. */
+  /* 5. hint at the tail of merged. */
   for(i = 0; i < SHUTTLE_M; ++i)
     for(j = 0; j < SHUTTLE_N; ++j)
       h->vec[i].coeffs[j] = merged[(SHUTTLE_L + 1 + i) * SHUTTLE_N + j];

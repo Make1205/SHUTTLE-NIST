@@ -215,8 +215,8 @@ def decode(stream: bytes, table: RansTable, n: int) -> List[int]:
     """Decode n symbols from the byte stream.
 
     After consuming the n symbols, verify that the residual state equals
-    RANS_L (the initial encoder state). A faithful round-trip always
-    leaves x == RANS_L; any mismatch indicates a corrupted byte stream.
+    RANS_L (the initial encoder state) and that the input was consumed
+    exactly. A faithful round-trip satisfies both conditions.
     """
     dec = RansDecoder(table, stream)
     out = [dec.get() for _ in range(n)]
@@ -224,6 +224,10 @@ def decode(stream: bytes, table: RansTable, n: int) -> List[int]:
         raise RuntimeError(
             f"rANS final-state verification failed: x = {dec.state:#x}, "
             f"expected RANS_L = {RANS_L:#x}"
+        )
+    if dec.pos != len(stream):
+        raise RuntimeError(
+            f"rANS trailing input: consumed {dec.pos} of {len(stream)} bytes"
         )
     return out
 

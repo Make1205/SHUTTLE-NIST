@@ -3,14 +3,13 @@
  *
  * Three parameter sets:
  *
- *   SHUTTLE_NIST_MODE=120 : n=256, q=32257, sigma=67, full NTT (base_deg=1)
- *   SHUTTLE_NIST_MODE=180 : n=256, q=15361, sigma=79, full NTT (base_deg=1)
- *   SHUTTLE_NIST_MODE=255 : n=256, q=7681,  sigma=90, full NTT (base_deg=1)
+ *   SHUTTLE_NIST_MODE=120 : n=256, q=32257, sigma=70, full NTT (base_deg=1)
+ *   SHUTTLE_NIST_MODE=180 : n=256, q=15361, sigma=82, full NTT (base_deg=1)
+ *   SHUTTLE_NIST_MODE=255 : n=256, q=7681,  sigma=99, full NTT (base_deg=1)
  *
- * Key invariant: alpha_h = 2*alpha_r = 128 across all three modes, so
- * sigma_hint = 2r/alpha_h = r/alpha_r = sigma_z-hi. Hint and z-hi share
- * the same discrete-Gaussian PMF and a single rANS context encodes both
- * (single merged rANS stream).
+ * HighBits(z) and hint coefficients are encoded by one merged rANS
+ * context. Its frequency table is generated from the coefficient-count-
+ * weighted mixture of the rounded-response and bucket-crossing PMFs.
  *
  * All three q satisfy q == 1 (mod 2n=512), so full NTT applies in every
  * mode.
@@ -200,9 +199,10 @@
  *     -> mode 180: alpha_0' = 64/8  = 8 (3 bits)
  *     -> mode 255: alpha_0' = 64/16 = 4 (2 bits)
  *
- *   alpha_h = 2*alpha_r = 128 across all modes: sigma_hint = 2r/alpha_h
- *              equals sigma_z-hi = r/alpha_r, so hint and z-hi share the
- *              same single rANS frequency table (design S, single-stream).
+ *   alpha_h = 2*alpha_r = 128 across all modes: the hint and z-hi scales
+ *              are comparable. Their distributions are not identical, so
+ *              the single-stream table uses their coefficient-count-
+ *              weighted mixture.
  * ============================================================ */
 #define SHUTTLE_ALPHA_R       64
 #define SHUTTLE_ALPHA_R_BITS  6
@@ -241,9 +241,9 @@
 #define SHUTTLE_POLYZ0_PACKEDBYTES    ((SHUTTLE_N * SHUTTLE_Z0_BITS + 7) / 8)
 
 /* z[1..L]: full-range signed coefficients. Z_BOUND <= 11*sigma + alpha_1*tau.
- *   mode-120: 11*67 + 8*58  = 1201, 12 signed bits
- *   mode-180: 11*79 + 8*80  = 1509, 12 signed bits
- *   mode-255: 11*90 + 16*128 = 3038, 13 signed bits
+ *   mode-120: 11*70 + 8*58  = 1234, 12 signed bits
+ *   mode-180: 11*82 + 8*80  = 1542, 12 signed bits
+ *   mode-255: 11*99 + 16*128 = 3137, 13 signed bits
  * Use 13 bits uniformly. */
 #define SHUTTLE_POLYZ_BITS  13
 #define SHUTTLE_POLYZ_PACKEDBYTES     ((SHUTTLE_N * SHUTTLE_POLYZ_BITS + 7) / 8)
@@ -254,25 +254,22 @@
 /* Hint encoding (sparse-index list) -- placeholder; see polyveck_hint_pack_basic */
 #define SHUTTLE_POLYVECH_PACKEDBYTES  (SHUTTLE_M * (SHUTTLE_N / 8 + 1))
 
-/* IRS sign bits */
-#define SHUTTLE_IRS_SIGNBYTES         ((SHUTTLE_TAU + 7) / 8)
-
 /* ============================================================
  * rANS reservation budget for the merged single-stream design (design S).
  *
  * One rANS context encodes n*(lenS+1+lenE) symbols (HighBits of z^(0..L)
- * followed by hint), all sharing the same discrete Gaussian PMF at
- * sigma = r/alpha_r. Reservation sized via Gauss CLT at
- * p_rans^* = 2^-20 (Phi^{-1}(1 - 2^-20) ~ 4.61). Numbers below are
- * produced by tools/SigSize.py. Regenerate with:
+ * followed by hint). Its table and rate calculation use the analytic
+ * mixture described above. The reservation is sized via a Gaussian
+ * codelength approximation at p_rans^* = 2^-30. Numbers below are produced
+ * by tools/SigSize.py. Regenerate with:
  *   python3 ../tools/SigSize.py
  * ============================================================ */
 #if SHUTTLE_NIST_MODE == 120
-#  define SHUTTLE_RANS_RESERVED_BYTES  439
+#  define SHUTTLE_RANS_RESERVED_BYTES  469
 #elif SHUTTLE_NIST_MODE == 180
-#  define SHUTTLE_RANS_RESERVED_BYTES  641
+#  define SHUTTLE_RANS_RESERVED_BYTES  675
 #elif SHUTTLE_NIST_MODE == 255
-#  define SHUTTLE_RANS_RESERVED_BYTES  859
+#  define SHUTTLE_RANS_RESERVED_BYTES  923
 #endif
 
 #define SHUTTLE_RANS_BLOCK_BYTES     (2 + SHUTTLE_RANS_RESERVED_BYTES)
@@ -296,12 +293,11 @@
                                    + SHUTTLE_M * SHUTTLE_POLYETA_PACKEDBYTES)
 
 /* Signature layout (single merged rANS stream):
- *   seedC || irs_signs
- *   || uint16 rans_len || rANS(z-hi  ⨁  hint) + pad to RANS_RESERVED
+ *   seedC || uint16 rans_len
+ *   || rANS(z-hi  ⨁  hint) + pad to RANS_RESERVED
  *   || polyz0_lo_pack(lo(z^(0)))
  *   || L * polyz1_lo_pack(lo(z^(1..lenS))) */
 #define SHUTTLE_BYTES  ( SHUTTLE_CTILDEBYTES \
-                       + SHUTTLE_IRS_SIGNBYTES \
                        + SHUTTLE_RANS_BLOCK_BYTES \
                        + SHUTTLE_POLYZ0_LO_PACKEDBYTES \
                        + SHUTTLE_L * SHUTTLE_POLYZ1_LO_PACKEDBYTES )
@@ -314,19 +310,19 @@
  *
  *   sigma | sigma_2 = sigma/k | RCDT entries
  *   ------+-------------------+---------------
- *    67   |   1.0469          |   11   (SHUTTLE-NIST-120)
- *    79   |   1.2344          |   13   (SHUTTLE-NIST-180)
- *    90   |   1.4062          |   15   (SHUTTLE-NIST-255)
+ *    70   |   1.09375         |   12   (SHUTTLE-NIST-120)
+ *    82   |   1.28125         |   14   (SHUTTLE-NIST-180)
+ *    99   |   1.546875        |   17   (SHUTTLE-NIST-255)
  * ============================================================ */
 
-#if SHUTTLE_SIGMA == 67
-#  define RCDT_ENTRIES 11
-#elif SHUTTLE_SIGMA == 79
-#  define RCDT_ENTRIES 13
-#elif SHUTTLE_SIGMA == 90
-#  define RCDT_ENTRIES 15
+#if SHUTTLE_SIGMA == 70
+#  define RCDT_ENTRIES 12
+#elif SHUTTLE_SIGMA == 82
+#  define RCDT_ENTRIES 14
+#elif SHUTTLE_SIGMA == 99
+#  define RCDT_ENTRIES 17
 #else
-#  error "Unsupported SHUTTLE_SIGMA (expected 67, 79, or 90)"
+#  error "Unsupported SHUTTLE_SIGMA (expected 70, 82, or 99)"
 #endif
 
 #define SHUTTLE_RCDT_LIMB_BITS 31
@@ -336,6 +332,11 @@
 #define SHUTTLE_K_BITS         6
 #define SHUTTLE_Y_BITS         6
 #define SHUTTLE_TWO_K_BITS     7
+
+/* Hard support of the convolution sampler before the signature encoder's
+ * configured 11*sigma vocabulary check. */
+#define SHUTTLE_GAUSS_MAX \
+    (RCDT_ENTRIES * SHUTTLE_GAUSS_K + ((1 << SHUTTLE_Y_BITS) - 1))
 
 #define SHUTTLE_TRUNC        11
 #define SHUTTLE_BOUND        (SHUTTLE_TRUNC * SHUTTLE_SIGMA)
@@ -349,5 +350,10 @@
 /* Reciprocal of sigma^2 in Q62 (used by rejsample.c). */
 #define SHUTTLE_INV_SIGMA2_Q62 \
     ((uint64_t)(((uint64_t)1 << 62) / ((uint64_t)SHUTTLE_SIGMA * (uint64_t)SHUTTLE_SIGMA)))
+
+/* Reciprocal of 2*sigma^2 in Q62, used to compute
+ * gamma = ||sk_stretched||^2/(2*sigma^2). */
+#define SHUTTLE_INV_2SIGMA2_Q62 \
+    ((int64_t)(((uint64_t)1 << 61) / ((uint64_t)SHUTTLE_SIGMA * (uint64_t)SHUTTLE_SIGMA)))
 
 #endif /* SHUTTLE_PARAMS_H */

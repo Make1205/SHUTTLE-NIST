@@ -4,9 +4,11 @@
  *
  * Tests:
  *   1. Minimal hand-crafted round-trip (all-zero z and h).
- *   2. 10 random rounds: z_1 drawn so HighBits live in the merged
- *      vocabulary, h drawn from the same PMF (since sigma_hint =
- *      sigma_z-hi); reports merged rANS length.
+ *   2. 10 random rounds: z_1 is obtained by rounding response-Gaussian
+ *      coefficients and h is drawn through the actual MakeHint map;
+ *      reports the merged rANS length.
+ *   3. Canonical-encoding rejection for nonzero padding and an extended
+ *      rANS length prefix.
  */
 
 #include <stdio.h>
@@ -19,80 +21,46 @@
 #include "../poly.h"
 #include "../polyvec.h"
 #include "../packing.h"
+#include "../rounding.h"
 #include "../shuttle_rans.h"
 #include "../rans_tables.h"
 
 #define PASS(msg) do { printf("  [PASS] " msg "\n"); } while (0)
 #define FAIL(msg, ...) do { printf("  [FAIL] " msg "\n", __VA_ARGS__); return 1; } while (0)
 
-#if SHUTTLE_NIST_MODE == 120
-#  define R_NUM_SYMS  SHUTTLE_NIST120_RANS_NUM_SYMS
-#  define R_SYM_MAX   SHUTTLE_NIST120_RANS_SYM_MAX
-#  define r_syms      shuttle_nist120_rans_syms
-#  define r_freqs     shuttle_nist120_rans_freqs
-#elif SHUTTLE_NIST_MODE == 180
-#  define R_NUM_SYMS  SHUTTLE_NIST180_RANS_NUM_SYMS
-#  define R_SYM_MAX   SHUTTLE_NIST180_RANS_SYM_MAX
-#  define r_syms      shuttle_nist180_rans_syms
-#  define r_freqs     shuttle_nist180_rans_freqs
-#else
-#  define R_NUM_SYMS  SHUTTLE_NIST255_RANS_NUM_SYMS
-#  define R_SYM_MAX   SHUTTLE_NIST255_RANS_SYM_MAX
-#  define r_syms      shuttle_nist255_rans_syms
-#  define r_freqs     shuttle_nist255_rans_freqs
-#endif
-
-/* Discrete-Gaussian sampler on [-M_voc, M_voc] via cached inverse CDF.
- * Models the real signer's distribution (truncated Gaussian, NOT the
- * quantized rANS table). The rANS rate is sized against this PMF. */
-#define SG_CDF_SIZE  64
-
-static int32_t sample_discrete_gaussian(double sigma, int M_voc) {
+/* Response-Gaussian sampler on [-11*sigma,11*sigma] via cached inverse CDF. */
+static int32_t sample_response_gaussian(void) {
   static int valid = 0;
-  static double cached_sigma = 0.0;
-  static int cached_M = 0;
-  static double cdf[SG_CDF_SIZE];
-  if (2 * M_voc + 1 > SG_CDF_SIZE) {
-    fprintf(stderr, "sample_discrete_gaussian: M_voc=%d exceeds SG_CDF_SIZE\n", M_voc);
-    abort();
-  }
-  if (!valid || sigma != cached_sigma || M_voc != cached_M) {
-    cached_sigma = sigma;
-    cached_M = M_voc;
+  static double cdf[2 * SHUTTLE_BOUND + 1];
+  if (!valid) {
     double Z = 0.0;
-    for (int k = -M_voc; k <= M_voc; ++k)
-      Z += exp(-(double)k * k / (2.0 * sigma * sigma));
+    for (int k = -SHUTTLE_BOUND; k <= SHUTTLE_BOUND; ++k)
+      Z += exp(-(double)k * k /
+               (2.0 * SHUTTLE_SIGMA * SHUTTLE_SIGMA));
     double running = 0.0;
-    for (int k = -M_voc; k <= M_voc; ++k) {
-      running += exp(-(double)k * k / (2.0 * sigma * sigma)) / Z;
-      cdf[k + M_voc] = running;
+    for (int k = -SHUTTLE_BOUND; k <= SHUTTLE_BOUND; ++k) {
+      running += exp(-(double)k * k /
+                     (2.0 * SHUTTLE_SIGMA * SHUTTLE_SIGMA)) / Z;
+      cdf[k + SHUTTLE_BOUND] = running;
     }
     valid = 1;
   }
   double u = ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0);
-  for (int i = 0; i <= 2 * M_voc; ++i)
-    if (u <= cdf[i]) return (int32_t)(i - M_voc);
-  return (int32_t)M_voc;
+  for (int i = 0; i <= 2 * SHUTTLE_BOUND; ++i)
+    if (u <= cdf[i]) return (int32_t)(i - SHUTTLE_BOUND);
+  return SHUTTLE_BOUND;
 }
 
-static inline int32_t sample_gauss_zhi(void) {
-  return sample_discrete_gaussian(
-      (double)SHUTTLE_SIGMA / (double)SHUTTLE_ALPHA_R, R_SYM_MAX);
-}
-
-/* Fill z_1[0..L] so the merged stream's HighBits land in-vocabulary. */
+/* Fill z_1[0..L] from the rounded response-Gaussian marginals. */
 static void fill_z1(poly *z_1) {
   for (unsigned j = 0; j < SHUTTLE_N; ++j) {
-    int32_t hi = sample_gauss_zhi();
-    int32_t lo = (rand() % SHUTTLE_ALPHA_0P) - SHUTTLE_HALF_ALPHA_0P;
-    z_1[0].coeffs[j] = (hi << SHUTTLE_ALPHA_0P_BITS) + lo;
+    int32_t z = sample_response_gaussian();
+    z_1[0].coeffs[j] =
+        (z + SHUTTLE_ALPHA_1 / 2) >> SHUTTLE_ALPHA_1_BITS;
   }
   for (unsigned i = 1; i <= SHUTTLE_L; ++i)
-    for (unsigned j = 0; j < SHUTTLE_N; ++j) {
-      int32_t hi = sample_gauss_zhi();
-      int32_t lo = (rand() % SHUTTLE_ALPHA_R) - SHUTTLE_HALF_ALPHA_R;
-      z_1[i].coeffs[j] = (hi << SHUTTLE_ALPHA_R_BITS) + lo;
-    }
+    for (unsigned j = 0; j < SHUTTLE_N; ++j)
+      z_1[i].coeffs[j] = sample_response_gaussian();
 }
 
 /* ------------------------------------------------------------ */
@@ -101,29 +69,23 @@ static int test_minimal(void) {
 
   uint8_t sig[SHUTTLE_BYTES];
   uint8_t c_tilde[SHUTTLE_CTILDEBYTES];
-  int8_t  irs[SHUTTLE_TAU];
   poly    z_1[1 + SHUTTLE_L];
   polyveck h, h_rec;
 
   for (unsigned i = 0; i < SHUTTLE_CTILDEBYTES; ++i) c_tilde[i] = (uint8_t)(i * 17 + 3);
-  for (unsigned i = 0; i < SHUTTLE_TAU; ++i) irs[i] = (i & 1) ? (int8_t)1 : (int8_t)-1;
   for (unsigned i = 0; i < 1 + SHUTTLE_L; ++i) memset(&z_1[i], 0, sizeof(poly));
   memset(&h, 0, sizeof h);
 
-  int rc = pack_sig(sig, c_tilde, irs, z_1, &h);
+  int rc = pack_sig(sig, c_tilde, z_1, &h);
   if (rc != 0) FAIL("pack_sig rc=%d", rc);
 
   uint8_t c_rec[SHUTTLE_CTILDEBYTES];
-  int8_t  irs_rec[SHUTTLE_TAU];
   poly    z_rec[1 + SHUTTLE_L];
-  rc = unpack_sig(c_rec, irs_rec, z_rec, &h_rec, sig);
+  rc = unpack_sig(c_rec, z_rec, &h_rec, sig);
   if (rc != 0) FAIL("unpack_sig rc=%d", rc);
 
   if (memcmp(c_tilde, c_rec, SHUTTLE_CTILDEBYTES) != 0)
     FAIL("c_tilde mismatch%s", "");
-  for (unsigned i = 0; i < SHUTTLE_TAU; ++i)
-    if (irs[i] != irs_rec[i])
-      FAIL("irs_signs[%u]: %d vs %d", i, irs[i], irs_rec[i]);
   for (unsigned i = 0; i < 1 + SHUTTLE_L; ++i)
     for (unsigned j = 0; j < SHUTTLE_N; ++j)
       if (z_1[i].coeffs[j] != z_rec[i].coeffs[j])
@@ -147,38 +109,33 @@ static int test_random_rounds(void) {
   size_t min_rans = (size_t)-1, max_rans = 0, sum_rans = 0;
 
   /* Offset of the merged rANS length-prefix in the signature. */
-  const size_t off_rans_len = SHUTTLE_CTILDEBYTES + SHUTTLE_IRS_SIGNBYTES;
+  const size_t off_rans_len = SHUTTLE_CTILDEBYTES;
 
   for (unsigned round = 0; round < 10; ++round) {
     uint8_t sig[SHUTTLE_BYTES];
     uint8_t c_tilde[SHUTTLE_CTILDEBYTES];
-    int8_t  irs[SHUTTLE_TAU];
     poly    z_1[1 + SHUTTLE_L];
     polyveck h, h_rec;
 
     for (unsigned i = 0; i < SHUTTLE_CTILDEBYTES; ++i) c_tilde[i] = (uint8_t)rand();
-    for (unsigned i = 0; i < SHUTTLE_TAU; ++i)
-      irs[i] = (rand() & 1) ? (int8_t)1 : (int8_t)-1;
-
     fill_z1(z_1);
-    /* hint shares the same PMF as z-hi (sigma_hint = sigma_z-hi). */
+    /* Draw hints through the implementation's MakeHint map. */
     for (unsigned i = 0; i < SHUTTLE_M; ++i)
-      for (unsigned j = 0; j < SHUTTLE_N; ++j)
-        h.vec[i].coeffs[j] = sample_gauss_zhi();
+      for (unsigned j = 0; j < SHUTTLE_N; ++j) {
+        int32_t w = rand() % SHUTTLE_DQ;
+        int32_t z2 = sample_response_gaussian();
+        h.vec[i].coeffs[j] = make_hint_mod2q(w, z2);
+      }
 
-    int rc = pack_sig(sig, c_tilde, irs, z_1, &h);
+    int rc = pack_sig(sig, c_tilde, z_1, &h);
     if (rc != 0) FAIL("round %u: pack rc=%d", round, rc);
 
     uint8_t c_rec[SHUTTLE_CTILDEBYTES];
-    int8_t  irs_rec[SHUTTLE_TAU];
     poly    z_rec[1 + SHUTTLE_L];
-    rc = unpack_sig(c_rec, irs_rec, z_rec, &h_rec, sig);
+    rc = unpack_sig(c_rec, z_rec, &h_rec, sig);
     if (rc != 0) FAIL("round %u: unpack rc=%d", round, rc);
 
     if (memcmp(c_tilde, c_rec, SHUTTLE_CTILDEBYTES) != 0) FAIL("round %u: c_tilde", round);
-    for (unsigned i = 0; i < SHUTTLE_TAU; ++i)
-      if (irs[i] != irs_rec[i])
-        FAIL("round %u: irs[%u]", round, i);
     for (unsigned i = 0; i < 1 + SHUTTLE_L; ++i)
       for (unsigned j = 0; j < SHUTTLE_N; ++j)
         if (z_1[i].coeffs[j] != z_rec[i].coeffs[j])
@@ -204,6 +161,46 @@ static int test_random_rounds(void) {
 }
 
 /* ------------------------------------------------------------ */
+static int test_canonical_encoding(void) {
+  printf("Test 3: canonical rANS encoding\n");
+
+  const size_t off_rans_len = SHUTTLE_CTILDEBYTES;
+  const size_t off_rans_data = off_rans_len + 2;
+  uint8_t sig[SHUTTLE_BYTES];
+  uint8_t bad[SHUTTLE_BYTES];
+  uint8_t c_tilde[SHUTTLE_CTILDEBYTES] = {0};
+  uint8_t c_rec[SHUTTLE_CTILDEBYTES];
+  poly z_1[1 + SHUTTLE_L];
+  poly z_rec[1 + SHUTTLE_L];
+  polyveck h, h_rec;
+
+  memset(z_1, 0, sizeof z_1);
+  memset(&h, 0, sizeof h);
+  if(pack_sig(sig, c_tilde, z_1, &h) != 0)
+    FAIL("canonical setup pack failed%s", "");
+
+  size_t rans_len = (size_t)sig[off_rans_len]
+                  | ((size_t)sig[off_rans_len + 1] << 8);
+  if(rans_len >= SHUTTLE_RANS_RESERVED_BYTES)
+    FAIL("canonical setup has no padding: %zu%s", rans_len, "");
+
+  memcpy(bad, sig, sizeof bad);
+  bad[off_rans_data + rans_len] = 1;
+  if(unpack_sig(c_rec, z_rec, &h_rec, bad) == 0)
+    FAIL("nonzero rANS padding accepted%s", "");
+
+  memcpy(bad, sig, sizeof bad);
+  ++rans_len;
+  bad[off_rans_len] = (uint8_t)rans_len;
+  bad[off_rans_len + 1] = (uint8_t)(rans_len >> 8);
+  if(unpack_sig(c_rec, z_rec, &h_rec, bad) == 0)
+    FAIL("extended rANS input accepted%s", "");
+
+  PASS("non-canonical encodings rejected");
+  return 0;
+}
+
+/* ------------------------------------------------------------ */
 int main(void) {
   int ret = 0;
   srand(0xC0DECAFEu ^ (unsigned)SHUTTLE_NIST_MODE);
@@ -213,6 +210,7 @@ int main(void) {
 
   ret |= test_minimal();
   ret |= test_random_rounds();
+  ret |= test_canonical_encoding();
 
   if (ret == 0) printf("\n=== All sig tests PASSED ===\n");
   else          printf("\n=== Some sig tests FAILED ===\n");

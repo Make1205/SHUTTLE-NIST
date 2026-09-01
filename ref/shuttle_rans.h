@@ -10,30 +10,30 @@
  *     (the z-hi sub-stream), and
  *   - hint h = MakeHint(...)
  *
- * The parameter set takes alpha_h = 2*alpha_r = 128 across all three
- * modes, so sigma_hint = 2r/alpha_h = r/alpha_r = sigma_z-hi. Hint and
- * z-hi share the same discrete-Gaussian PMF, and a single rANS context
- * with one frequency table encodes them end-to-end. The merge saves
+ * A single rANS context with one frequency table encodes these blocks
+ * end-to-end. The table is generated from the coefficient-count-weighted
+ * mixture of the rounded-response and bucket-crossing PMFs. The merge saves
  * ~16-21 B/sig of fixed overhead (1 flush + 1 length prefix) vs. a
  * two-stream design.
  *
- * Theoretical frequency table => OOV-free
- * ---------------------------------------
- * Frequency tables come from the theoretical discrete Gaussian PMF
- * (tools/gen_rans_tables.py), not from any empirical histogram. The
- * vocabulary radius is the max of the z-hi and hint l_infty tight bounds
- * (which coincide under alpha_h = 2*alpha_r), so every coefficient maps
- * to a real frequency bucket -- OOV failure is mathematically impossible.
+ * Analytic frequency table
+ * ------------------------
+ * Frequency tables come from the analytic mixture PMF
+ * (tools/gen_rans_tables.py), not from an empirical histogram. The
+ * vocabulary radius is the maximum of the configured z-hi and hint design
+ * bounds. The encoder checks the alphabet explicitly and reports an
+ * out-of-vocabulary symbol.
  *
  * Failure modes
  * -------------
  * Encoder return values:
  *   0  on success
+ *  -1  if an input symbol is outside the table alphabet
  *  -2  if the compressed stream would exceed max_bytes (overflow)
  *
  * Decoder return values:
- *   0  on success and x == L_ren at end-of-stream (state verified)
- *  -1  on underflow OR final-state mismatch (malformed signature)
+ *   0  on success, x == L_ren, and exact input consumption
+ *  -1  on underflow, trailing input, or final-state mismatch
  *
  * ============================================================
  * Engine conventions
@@ -63,8 +63,9 @@
 /* Encode/decode contracts for the single merged stream.
  *
  *   0  : success
+ *  -1  : input symbol outside the alphabet (encoder), or malformed input
+ *        (decoder)
  *  -2  : output would exceed max_bytes (encoder; signer restarts IRS)
- *  -1  : underflow or final-state mismatch (decoder)
  */
 #define shuttle_rans_encode SHUTTLE_NAMESPACE(shuttle_rans_encode)
 int shuttle_rans_encode(uint8_t *out, size_t *out_len, size_t max_bytes,

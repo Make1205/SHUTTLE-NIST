@@ -5,13 +5,12 @@
  * The function approx_exp() computes round(exp(-a) * 2^63) given a in
  * Q60 fixed-point; see approx_exp.c for the algorithm and error budget.
  *
- * Caller responsibility: the input must satisfy 0 <= a < 11 * ln(2) ~
- * 7.624. Every SHUTTLE parameter set's worst-case a_max stays below this
- * bound (SHUTTLE-NIST-120: 6.914, SHUTTLE-NIST-180: 4.812, SHUTTLE-NIST-255: 7.369).
+ * Caller responsibility: the input must satisfy 0 <= a < 11. The current
+ * worst cases are 10.280, 8.691, and 7.197 for modes 120, 180, and 255.
  *
- * Output precision: 53-bit relative (a-independent terms ~ 2^-58 plus
- * an output-quantisation term 2^-64 / exp(-a) that dominates near
- * a = a_max).
+ * The a-independent relative-error terms sum to about 2^-58. Output
+ * quantization adds at most 2^-64/exp(-a), about 2^-49.17 at the largest
+ * configured tail exponent.
  *
  * Side-channel: no data-dependent control flow; the B-entry table is
  * always scanned end-to-end with bit masks.
@@ -64,7 +63,7 @@ static inline int64_t smulh64(int64_t a, int64_t b) {
 /* ============================================================
  * approx_exp -- core primitive.
  *
- *   Input:  a_q60 = round(a * 2^60), with a in [0, 11 * ln 2).
+ *   Input:  a_q60 = round(a * 2^60), with a in [0, 11).
  *   Output: round(exp(-a) * 2^63) as uint64_t, in [0, 2^63].
  *
  * Constant-time with respect to a_q60 and the implied internal index
