@@ -55,6 +55,10 @@
 #define SHUTTLE_M          2             /* lenE */
 #define SHUTTLE_ETA        1
 #define SHUTTLE_TAU        58
+#define SHUTTLE_IRS_N      75
+#define SHUTTLE_LOG_EXPONENT_REQUIRED 20940
+#define SHUTTLE_LOG_SCALE_HI 6792
+#define SHUTTLE_LOG_SCALE_LO UINT64_C(3884743587687722514)
 #define SHUTTLE_ALPHA_H    128
 #define SHUTTLE_ALPHA_1    8
 
@@ -76,6 +80,10 @@
 #define SHUTTLE_M          3
 #define SHUTTLE_ETA        1
 #define SHUTTLE_TAU        80
+#define SHUTTLE_IRS_N      89
+#define SHUTTLE_LOG_EXPONENT_REQUIRED 28383
+#define SHUTTLE_LOG_SCALE_HI 9321
+#define SHUTTLE_LOG_SCALE_LO UINT64_C(2044287409645675025)
 #define SHUTTLE_ALPHA_H    128
 #define SHUTTLE_ALPHA_1    8
 
@@ -97,6 +105,10 @@
 #define SHUTTLE_M          4
 #define SHUTTLE_ETA        1
 #define SHUTTLE_TAU        128
+#define SHUTTLE_IRS_N      55
+#define SHUTTLE_LOG_EXPONENT_REQUIRED 19690
+#define SHUTTLE_LOG_SCALE_HI 13587
+#define SHUTTLE_LOG_SCALE_LO UINT64_C(327583442694609146)
 #define SHUTTLE_ALPHA_H    128
 #define SHUTTLE_ALPHA_1    16
 
@@ -110,6 +122,10 @@
 
 #else
 #  error "Unsupported SHUTTLE_NIST_MODE (expected 120, 180, or 255)"
+#endif
+
+#if SHUTTLE_LOG_EXPONENT_BITS < SHUTTLE_LOG_EXPONENT_REQUIRED
+#  error "Logarithm exponent support is too short for this parameter set"
 #endif
 
 /* Pull in MONT / QINV / BARRETT_V / INVNTT_F / zetas table per mode. */
@@ -171,6 +187,13 @@
 #define SHUTTLE_HALF_ALPHA_H (SHUTTLE_ALPHA_H / 2)
 #define SHUTTLE_HINT_MOD    (2 * (SHUTTLE_Q - 1))
 #define SHUTTLE_HINT_MAX    (SHUTTLE_HINT_MOD / SHUTTLE_ALPHA_H)
+
+/* HighBits are hashed in the paper's scaled representation.  Every bucket
+ * index is multiplied by alpha_h and serialized as a canonical little-endian
+ * uint16_t, which is wide enough for all values modulo 2(q-1). */
+#define SHUTTLE_WHASH_COEFF_BYTES 2
+#define SHUTTLE_WHASH_PACKEDBYTES \
+    (SHUTTLE_M * SHUTTLE_N * SHUTTLE_WHASH_COEFF_BYTES)
 
 #if SHUTTLE_ALPHA_H == 128
 #  define SHUTTLE_ALPHA_H_BITS 7
@@ -346,14 +369,5 @@
  *   |z[i]|_inf <= 11*sigma + tau           for i >= 1
  * Use the larger of the two as a uniform bound. */
 #define SHUTTLE_Z_BOUND      (SHUTTLE_BOUND + SHUTTLE_ALPHA_1 * SHUTTLE_TAU)
-
-/* Reciprocal of sigma^2 in Q62 (used by rejsample.c). */
-#define SHUTTLE_INV_SIGMA2_Q62 \
-    ((uint64_t)(((uint64_t)1 << 62) / ((uint64_t)SHUTTLE_SIGMA * (uint64_t)SHUTTLE_SIGMA)))
-
-/* Reciprocal of 2*sigma^2 in Q62, used to compute
- * gamma = ||sk_stretched||^2/(2*sigma^2). */
-#define SHUTTLE_INV_2SIGMA2_Q62 \
-    ((int64_t)(((uint64_t)1 << 61) / ((uint64_t)SHUTTLE_SIGMA * (uint64_t)SHUTTLE_SIGMA)))
 
 #endif /* SHUTTLE_PARAMS_H */

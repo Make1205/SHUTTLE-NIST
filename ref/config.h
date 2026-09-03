@@ -46,4 +46,11 @@
 #  endif
 #endif
 
+/* The logarithm exponent is decoded lazily in 80-bit blocks.  A nonzero
+ * first block is the overwhelmingly common path; further public-randomness
+ * blocks are squeezed only after an all-zero block.  32720 is a multiple of
+ * 80 and exceeds the supported-range requirement of every parameter set. */
+#define SHUTTLE_LOG_EXPONENT_BLOCK_BITS 80
+#define SHUTTLE_LOG_EXPONENT_BITS       32720
+
 #endif

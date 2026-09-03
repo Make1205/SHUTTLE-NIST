@@ -116,6 +116,12 @@ void polyveck_pack_w1(uint8_t r[SHUTTLE_M * SHUTTLE_POLYW1_PACKEDBYTES],
 #define polyveck_highbits_mod_2q SHUTTLE_NAMESPACE(polyveck_highbits_mod_2q)
 void polyveck_highbits_mod_2q(polyveck *out, const polyveck *w);
 
+#define polyveck_highbits_pack_hash \
+    SHUTTLE_NAMESPACE(polyveck_highbits_pack_hash)
+void polyveck_highbits_pack_hash(
+    uint8_t out[SHUTTLE_WHASH_PACKEDBYTES],
+    const polyveck *w_h);
+
 /* Extract LSB of each of M*N coefficients. Output layout: M * (N/8) bytes.
  * Bitmap for row i starts at offset i * N/8. */
 #define polyveck_lsb_extract SHUTTLE_NAMESPACE(polyveck_lsb_extract)

@@ -468,6 +468,22 @@ void polyveck_highbits_mod_2q(polyveck *out, const polyveck *w) {
     poly_highbits_mod_2q(&out->vec[i], &w->vec[i]);
 }
 
+void polyveck_highbits_pack_hash(
+    uint8_t out[SHUTTLE_WHASH_PACKEDBYTES],
+    const polyveck *w_h)
+{
+  unsigned int i, j;
+  for(i = 0; i < SHUTTLE_M; ++i) {
+    for(j = 0; j < SHUTTLE_N; ++j) {
+      uint16_t scaled = (uint16_t)(SHUTTLE_ALPHA_H
+                         * w_h->vec[i].coeffs[j]);
+      unsigned int offset = 2U * (i * SHUTTLE_N + j);
+      out[offset + 0] = (uint8_t)(scaled & 0xFFU);
+      out[offset + 1] = (uint8_t)(scaled >> 8);
+    }
+  }
+}
+
 void polyveck_lsb_extract(uint8_t bitmap[SHUTTLE_M * SHUTTLE_N / 8],
                           const polyveck *w)
 {

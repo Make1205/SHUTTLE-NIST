@@ -55,7 +55,15 @@ The BLISS-style discrete-Gaussian sampler uses `r = 64 * sigma_2`, with the exac
 
 Direct finite-distribution evaluation, including the Q63 acceptance threshold and all `n*(1+lenS+lenE)` mask coefficients, gives `M1 - 1 < 2^-86.78, 2^-85.45, 2^-87.83` at Rényi orders 240, 360, and 510, respectively.
 
-Iterated Rejection Sampling (IRS): the IntervalParity walk uses 37 iterations per challenge monomial.
+Iterated Rejection Sampling (IRS) uses the paper's odd truncation indices
+`N = 75, 89, 55`, respectively.  A transition tests `(N+1)/2` disjoint
+intervals. Its public random sample uses a 57-bit mantissa and a geometric
+exponent decoded lazily in 80-bit blocks, with a 32720-bit supported-range
+cutoff. The required cutoffs are 20940, 28383 and 19690 bits. Consequently,
+all `18*tau` ordinary-case bytes are squeezed in one batch; an extension is
+needed only with probability `2^-80`. The mantissa uses the four-segment
+degree-13 Q62 polynomial, and signed 128-bit arithmetic keeps interval
+boundaries exact over the supported range.
 
 
 ## 2. Repository Layout
@@ -73,7 +81,7 @@ SHUTTLE-NIST/
 │   ├── rcdt_tables.h         # auto-generated 93-bit reverse-CDT tables
 │   ├── rejsample.{c,h}      # iterative rejection sampling (IRS)
 │   ├── approx_exp.{c,h}     # constant-time fixed-point exp(-a)
-│   ├── approx_log.{c,h}     # constant-time fixed-point -ln(r)
+│   ├── approx_log.{c,h}     # segmented integer-only fixed-point log2(U)
 │   ├── poly.{c,h}           # single-polynomial operations
 │   ├── polyvec.{c,h}        # polynomial-vector operations
 │   ├── ntt.{c,h}            # NTT / inverse NTT
@@ -144,6 +152,7 @@ This runs, for every mode, the following test binaries in sequence and checks ea
 * `test_rans<m>` — rANS encode / decode round-trip on small and large inputs, empty-stream little-endian flush, and single-byte corruption detection.
 * `test_poly_z1<m>` — z-split / z-combine round-trip and full pack pipeline.
 * `test_sig<m>` — `pack_sig` / `unpack_sig` round-trip plus rejection of non-canonical rANS lengths and padding.
+* `test_irs<m>` — exponent/mantissa decoding, segmented-log monotonicity and accuracy, and wide-range IRS interval decisions.
 * `test_sign<m>` — end-to-end keypair / sign / verify, forgery and canonical-encoding rejection tests, legacy-length rejection, and a 100-round stress test.
 
 A successful run prints `All * tests PASSED` for each binary and ends with `All mode check runs completed`.
@@ -220,8 +229,8 @@ python3 tools/gen_rans_tables.py --out ref/rans_tables.h
 ```
 
 These four scripts regenerate every auto-generated header from first-principles math (no empirical samples).
-* The IRS routine, the discrete Gaussian sampler and the inner approximations (`approx_exp`, `approx_log`) are constant-time with respect to all secret-dependent data; there are no secret-dependent branches and no secret-dependent table indexing.
-* `__int128` is used in `approx_exp.c`, `approx_log.c` and `sampler.c` for 128-bit fixed-point arithmetic. Both `gcc` and `clang` lower this to a single `mulq` on x86-64.
+* The IRS routine, the discrete Gaussian sampler and the inner approximations (`approx_exp`, `approx_log`) have fixed control flow and fixed memory access with respect to secret-dependent data. The segmented-log coefficient row is selected by a masked scan. Lazy exponent extension changes control flow only as a function of public randomness.
+* `__int128` is used in `approx_exp.c`, `approx_log.c`, `rejsample.c` and `sampler.c` for fixed-point products and overflow-free IRS interval boundaries. Both `gcc` and `clang` provide native support on the stated x86-64 target.
 
 
 ## 8. Benchmark Results

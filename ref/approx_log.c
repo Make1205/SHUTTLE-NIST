@@ -1,340 +1,133 @@
 /*
- * approx_log.c - ApproxNegLn implementation for SHUTTLE.
+ * approx_log.c - Integer-only approximation of log2(U) for SHUTTLE IRS.
  *
- * Given r_rand in (0, 2^64) representing r in (0, 1):
- *
- *   1) Range Reduction (CLZ):
- *      e = CLZ(r_rand), m = r_rand << e
- *      m has bit 63 set, represents m_frac = m * 2^{-63} in [1, 2)
- *      r = r_rand * 2^{-64} = 2^{-(e+1)} * m_frac
- *      So: -ln(r) = (e+1)*ln(2) - ln(m_frac)
- *
- *   2) Table Subdivision (B=64):
- *      t = m - 2^63 (fractional part, Q63, in [0, 2^63))
- *      j = t >> 57  (top 6 bits -> table index 0..63)
- *      rem = t - (j << 57) (remainder in Q63, in [0, 2^57))
- *
- *   3) Table Lookup:
- *      L = table_ln[j]   = ln(1 + j/64) in Q62
- *      InvD = table_inv[j] = 1/(1 + j/64) in Q62
- *
- *   4) Scale Remainder:
- *      s = rem * InvD >> 63  (s in Q62, range [0, 1/64))
- *      Mathematically: s_exact = (rem/2^63) / (1+j/64)
- *
- *   5) Horner Evaluation of Q(s) = c0 + c1*s + ... + c8*s^8
- *      where c_k = (-1)^k / (k+1), all in Q62.
- *      ln(1+s) = s * Q(s)
- *
- *   6) Combine:
- *      ln_m = L + s * Q(s)
- *      ell = (e+1) * LN2_Q62 - ln_m
- *
- * Precision: ~57 bits absolute.
- * All operations are constant-time (no data-dependent branches).
+ * The ordinary path consumes an 80-bit exponent block and a 57-bit mantissa
+ * block (18 bytes in total). The exponent is geometric, obtained from the
+ * number of leading zero bits. Additional 80-bit public-randomness blocks
+ * are read lazily only after an all-zero block, up to the supported-range
+ * cutoff. The mantissa is evaluated with the four-segment degree-13 Q62
+ * polynomial specified in the paper. Keeping the exponent separate avoids
+ * the dynamic-range overflow of a signed Q62 complete logarithm.
  */
 
+#include "config.h"
 #include "approx_log.h"
-#include "approx_exp.h"  /* for mulh64, smulh64, wide_uint128, wide_int128 */
 
-/* ============================================================
- * Constants
- * ============================================================ */
+typedef __int128 wide_int128;
 
-/* ln(2) in Q62 = round(0.693147180559945... * 2^62) */
-#define LN2_Q62  INT64_C(3196577161300663808)
-
-/* ============================================================
- * Q(s) = ln(1+s)/s Taylor coefficients in Q62.
- * c_k = (-1)^k / (k+1)
- * ============================================================ */
-static const int64_t QCOEFFS[9] = {
-    INT64_C( 4611686018427387904),   /* c0 =  1    * 2^62 */
-    INT64_C(-2305843009213693952),   /* c1 = -1/2  * 2^62 */
-    INT64_C( 1537228672809129216),   /* c2 =  1/3  * 2^62 */
-    INT64_C(-1152921504606846976),   /* c3 = -1/4  * 2^62 */
-    INT64_C(  922337203685477632),   /* c4 =  1/5  * 2^62 */
-    INT64_C( -768614336404564608),   /* c5 = -1/6  * 2^62 */
-    INT64_C(  658812288346769664),   /* c6 =  1/7  * 2^62 */
-    INT64_C( -576460752303423488),   /* c7 = -1/8  * 2^62 */
-    INT64_C(  512409557603043072),   /* c8 =  1/9  * 2^62 */
+/* c[j][i] is the signed Q62 coefficient of x^i on segment j. */
+static const int64_t LOG2_COEFFS[4][14] = {
+    {
+        INT64_C(0), INT64_C(1663314137230540005),
+        INT64_C(-207914267153782834), INT64_C(34652377857794422),
+        INT64_C(-6497320829889967), INT64_C(1299464001399016),
+        INT64_C(-270720747985221), INT64_C(58008183734025),
+        INT64_C(-12680634058615), INT64_C(2802591328231),
+        INT64_C(-611697204761), INT64_C(123141961189),
+        INT64_C(-19530076391), INT64_C(1717255301)
+    },
+    {
+        INT64_C(1484631294131014398), INT64_C(1330651309784432187),
+        INT64_C(-133065130978439107), INT64_C(17742017463685572),
+        INT64_C(-2661302618120493), INT64_C(425808407352253),
+        INT64_C(-70968007646487), INT64_C(12165731010280),
+        INT64_C(-2128477788302), INT64_C(377485364884),
+        INT64_C(-66839897685), INT64_C(11228353229),
+        INT64_C(-1554229086), INT64_C(124985134)
+    },
+    {
+        INT64_C(2697663385880076776), INT64_C(1108876091487026868),
+        INT64_C(-92406340957251847), INT64_C(10267371217462318),
+        INT64_C(-1283421402046772), INT64_C(171122852511038),
+        INT64_C(-23767057140815), INT64_C(3395273701197),
+        INT64_C(-495094418506), INT64_C(73261264270),
+        INT64_C(-10884612082), INT64_C(1561954161),
+        INT64_C(-191070343), INT64_C(14130118)
+    },
+    {
+        INT64_C(3723267405961586381), INT64_C(950465221274594463),
+        INT64_C(-67890372948185266), INT64_C(6465749804587722),
+        INT64_C(-692758907616243), INT64_C(79172446438655),
+        INT64_C(-9425290482070), INT64_C(1154114515161),
+        INT64_C(-144257705268), INT64_C(18306992888),
+        INT64_C(-2339854304), INT64_C(292286931),
+        INT64_C(-31958889), INT64_C(2187745)
+    }
 };
 
-/* ============================================================
- * Precomputed tables (64 entries each).
- *
- * table_ln[j]  = round(ln(1 + j/64) * 2^62), Q62 signed
- * table_inv[j] = round(2^62 / (1 + j/64)),   Q62 unsigned-range
- *
- * Generated by: python3 -c "import math; Q=2**62; ..."
- * ============================================================ */
-
-/* table_ln[j] = round(ln(1 + j/64) * 2^62) */
-static const int64_t table_ln[64] = {
-    INT64_C(                     0),  /* j= 0 */
-    INT64_C(     71500440275001120),  /* j= 1 */
-    INT64_C(    141909228037287936),  /* j= 2 */
-    INT64_C(    211259196826165120),  /* j= 3 */
-    INT64_C(    279581720803300544),  /* j= 4 */
-    INT64_C(    346906799979656256),  /* j= 5 */
-    INT64_C(    413263139310326528),  /* j= 6 */
-    INT64_C(    478678222179227840),  /* j= 7 */
-    INT64_C(    543178378744478080),  /* j= 8 */
-    INT64_C(    606788849569836160),  /* j= 9 */
-    INT64_C(    669533844927058304),  /* j=10 */
-    INT64_C(    731436600117858048),  /* j=11 */
-    INT64_C(    792519427131828736),  /* j=12 */
-    INT64_C(    852803762927731840),  /* j=13 */
-    INT64_C(    912310214599596544),  /* j=14 */
-    INT64_C(    971058601665755520),  /* j=15 */
-    INT64_C(   1029067995697975552),  /* j=16 */
-    INT64_C(   1086356757488956160),  /* j=17 */
-    INT64_C(   1142942571939435904),  /* j=18 */
-    INT64_C(   1198842480830767872),  /* j=19 */
-    INT64_C(   1254072913634921984),  /* j=20 */
-    INT64_C(   1308649716501276160),  /* j=21 */
-    INT64_C(   1362588179548156160),  /* j=22 */
-    INT64_C(   1415903062576720384),  /* j=23 */
-    INT64_C(   1468608619315380736),  /* j=24 */
-    INT64_C(   1520718620294393088),  /* j=25 */
-    INT64_C(   1572246374442453504),  /* j=26 */
-    INT64_C(   1623204749490040576),  /* j=27 */
-    INT64_C(   1673606191257749248),  /* j=28 */
-    INT64_C(   1723462741901951744),  /* j=29 */
-    INT64_C(   1772786057184697088),  /* j=30 */
-    INT64_C(   1821587422829804288),  /* j=31 */
-    INT64_C(   1869877770022571008),  /* j=32 */
-    INT64_C(   1917667690106341888),  /* j=33 */
-    INT64_C(   1964967448525366016),  /* j=34 */
-    INT64_C(   2011786998059858944),  /* j=35 */
-    INT64_C(   2058135991395951104),  /* j=36 */
-    INT64_C(   2104023793070232832),  /* j=37 */
-    INT64_C(   2149459490825871616),  /* j=38 */
-    INT64_C(   2194451906414741504),  /* j=39 */
-    INT64_C(   2239009605877689600),  /* j=40 */
-    INT64_C(   2283140909332897536),  /* j=41 */
-    INT64_C(   2326853900300320256),  /* j=42 */
-    INT64_C(   2370156434588336128),  /* j=43 */
-    INT64_C(   2413056148767049216),  /* j=44 */
-    INT64_C(   2455560468251094528),  /* j=45 */
-    INT64_C(   2497676615013356544),  /* j=46 */
-    INT64_C(   2539411614949629440),  /* j=47 */
-    INT64_C(   2580772304913014784),  /* j=48 */
-    INT64_C(   2621765339435664896),  /* j=49 */
-    INT64_C(   2662397197154399744),  /* j=50 */
-    INT64_C(   2702674186955724800),  /* j=51 */
-    INT64_C(   2742602453854813184),  /* j=52 */
-    INT64_C(   2782187984622167552),  /* j=53 */
-    INT64_C(   2821436613170836480),  /* j=54 */
-    INT64_C(   2860354025716315648),  /* j=55 */
-    INT64_C(   2898945765720546304),  /* j=56 */
-    INT64_C(   2937217238630761472),  /* j=57 */
-    INT64_C(   2975173716423308800),  /* j=58 */
-    INT64_C(   3012820341962007040),  /* j=59 */
-    INT64_C(   3050162133180044800),  /* j=60 */
-    INT64_C(   3087203987093926400),  /* j=61 */
-    INT64_C(   3123950683657492992),  /* j=62 */
-    INT64_C(   3160406889463605760)   /* j=63 */
-};
-
-/* table_inv[j] = round(2^62 / (1 + j/64)) */
-static const int64_t table_inv[64] = {
-    INT64_C(   4611686018427387904),  /* j= 0 */
-    INT64_C(   4540737002759274496),  /* j= 1 */
-    INT64_C(   4471937957262921728),  /* j= 2 */
-    INT64_C(   4405192614617206272),  /* j= 3 */
-    INT64_C(   4340410370284600320),  /* j= 4 */
-    INT64_C(   4277505872164533760),  /* j= 5 */
-    INT64_C(   4216398645419325952),  /* j= 6 */
-    INT64_C(   4157012749004969472),  /* j= 7 */
-    INT64_C(   4099276460824344576),  /* j= 8 */
-    INT64_C(   4043121988758257664),  /* j= 9 */
-    INT64_C(   3988485205126389760),  /* j=10 */
-    INT64_C(   3935305402391371264),  /* j=11 */
-    INT64_C(   3883525068149379072),  /* j=12 */
-    INT64_C(   3833089677653933056),  /* j=13 */
-    INT64_C(   3783947502299395072),  /* j=14 */
-    INT64_C(   3736049432650035712),  /* j=15 */
-    INT64_C(   3689348814741910528),  /* j=16 */
-    INT64_C(   3643801298510528512),  /* j=17 */
-    INT64_C(   3599364697309180928),  /* j=18 */
-    INT64_C(   3555998857582564352),  /* j=19 */
-    INT64_C(   3513665537849438208),  /* j=20 */
-    INT64_C(   3472328296227680256),  /* j=21 */
-    INT64_C(   3431952385806428160),  /* j=22 */
-    INT64_C(   3392504657233940480),  /* j=23 */
-    INT64_C(   3353953467947191296),  /* j=24 */
-    INT64_C(   3316268597520818176),  /* j=25 */
-    INT64_C(   3279421168659475968),  /* j=26 */
-    INT64_C(   3243383573399481856),  /* j=27 */
-    INT64_C(   3208129404123400192),  /* j=28 */
-    INT64_C(   3173633389025299456),  /* j=29 */
-    INT64_C(   3139871331695242752),  /* j=30 */
-    INT64_C(   3106820054519503360),  /* j=31 */
-    INT64_C(   3074457345618258432),  /* j=32 */
-    INT64_C(   3042761909065492992),  /* j=33 */
-    INT64_C(   3011713318156661248),  /* j=34 */
-    INT64_C(   2981291971508614656),  /* j=35 */
-    INT64_C(   2951479051793528320),  /* j=36 */
-    INT64_C(   2922256486924285440),  /* j=37 */
-    INT64_C(   2893606913523066880),  /* j=38 */
-    INT64_C(   2865513642517988352),  /* j=39 */
-    INT64_C(   2837960626724546560),  /* j=40 */
-    INT64_C(   2810932430279550976),  /* j=41 */
-    INT64_C(   2784414199805215232),  /* j=42 */
-    INT64_C(   2758391637190213120),  /* j=43 */
-    INT64_C(   2732850973882896384),  /* j=44 */
-    INT64_C(   2707778946599567360),  /* j=45 */
-    INT64_C(   2683162774357752832),  /* j=46 */
-    INT64_C(   2658990136750926336),  /* j=47 */
-    INT64_C(   2635249153387078656),  /* j=48 */
-    INT64_C(   2611928364419051520),  /* j=49 */
-    INT64_C(   2589016712099586048),  /* j=50 */
-    INT64_C(   2566503523298720256),  /* j=51 */
-    INT64_C(   2544378492925455360),  /* j=52 */
-    INT64_C(   2522631668199597056),  /* j=53 */
-    INT64_C(   2501253433723329024),  /* j=54 */
-    INT64_C(   2480234497305485824),  /* j=55 */
-    INT64_C(   2459565876494606848),  /* j=56 */
-    INT64_C(   2439238885779775488),  /* j=57 */
-    INT64_C(   2419245124420924928),  /* j=58 */
-    INT64_C(   2399576464872787456),  /* j=59 */
-    INT64_C(   2380225041768974336),  /* j=60 */
-    INT64_C(   2361183241434822656),  /* j=61 */
-    INT64_C(   2342443691899625472),  /* j=62 */
-    INT64_C(   2323999253380730880)   /* j=63 */
-};
-
-/* ============================================================
- * Fixed-point Q62 multiply: (a * b) >> 62, signed.
- * Both a, b are Q62; result is Q62.
- * ============================================================ */
-static inline int64_t mul_q62(int64_t a, int64_t b) {
-    return (int64_t)(((wide_int128)a * b) >> 62);
+/* Round-half-up division by 2^62. */
+static inline int64_t round_shift_q62(wide_int128 value) {
+    return (int64_t)((value + ((wide_int128)1 << 61)) >> 62);
 }
 
-/* ============================================================
- * Implementation
- * ============================================================ */
+static uint64_t load_be64(const uint8_t src[8]) {
+    uint64_t value = 0;
+    for (unsigned int i = 0; i < 8; ++i)
+        value = (value << 8) | src[i];
+    return value;
+}
 
-int64_t approx_neg_ln(uint64_t r_rand) {
-    /*
-     * Step 1: Range Reduction via CLZ.
-     *
-     * e = number of leading zeros in r_rand.
-     * If r_rand == 0, we clamp e = 63 (max meaningful shift).
-     * m = r_rand << e has bit 63 set, representing m_frac in [1, 2) as Q63.
-     *
-     * Then: r = r_rand * 2^{-64} = 2^{-(e+1)} * (m * 2^{-63})
-     * So:   -ln(r) = (e+1) * ln(2) - ln(m * 2^{-63})
-     *              = (e+1) * ln(2) - ln(m_frac)
-     */
-    uint64_t e;
-    uint64_t m;
+/* Return the leading-zero count of an 80-bit big-endian block. */
+static unsigned int clz80(const uint8_t src[10]) {
+    uint64_t hi = load_be64(src);
+    uint32_t lo = ((uint32_t)src[8] << 8) | src[9];
+    uint64_t hi_nz = (hi | (UINT64_C(0) - hi)) >> 63;
+    uint32_t lo_nz = (lo | (UINT32_C(0) - lo)) >> 31;
 
-    /* Constant-time substitute: replace r_rand = 0 with r_rand = 1.
-     * For r_rand = 1, CLZ returns 63 and m = 1 << 63 -- exactly the
-     * intended clamp (-ln(0) -> 64*ln(2), the maximum representable
-     * value). No data-dependent branch.
-     *
-     *   is_zero = 1 iff r_rand == 0, 0 otherwise
-     *   r_safe  = r_rand + is_zero    (= 1 when r_rand = 0; unchanged
-     *                                   when r_rand != 0). */
-    uint64_t is_zero = ((r_rand | (0ULL - r_rand)) >> 63) ^ 1ULL;
-    uint64_t r_safe  = r_rand + is_zero;
-    e = (uint64_t)__builtin_clzll(r_safe);
-    m = r_safe << e;
+    /* OR-with-one makes both CLZ calls defined on an all-zero limb. */
+    unsigned int lz_hi = (unsigned int)__builtin_clzll(hi | UINT64_C(1))
+                       + (unsigned int)(1U - hi_nz);
+    unsigned int lz_lo = (unsigned int)__builtin_clz(lo | UINT32_C(1)) - 16U
+                       + (unsigned int)(1U - lo_nz);
+    uint32_t hi_mask = UINT32_C(0) - (uint32_t)hi_nz;
 
-    /*
-     * Step 2: Table Index.
-     *
-     * t = m - 2^63 is the fractional part of m_frac (i.e., m_frac - 1), in Q63.
-     * t is in [0, 2^63).
-     * j = top 6 bits of t = t >> 57, giving j in {0, ..., 63}.
-     * rem = t - (j << 57), the remainder in [0, 2^57).
-     */
-    uint64_t t = m - (UINT64_C(1) << 63);
-    uint64_t j = t >> 57;
-    uint64_t rem = t - (j << 57);
+    return (lz_hi & hi_mask) | ((64U + lz_lo) & ~hi_mask);
+}
 
-    /*
-     * Step 3: Table Lookup.
-     *
-     * L = ln(1 + j/64) in Q62.
-     * InvD = 1/(1 + j/64) in Q62.
-     */
-    int64_t L    = table_ln[j];
-    int64_t InvD = table_inv[j];
+/* Select one coefficient row with the input-independent masked scan used in
+ * the paper's recommended implementation. */
+static void select_coefficients(int64_t selected[14], uint32_t segment) {
+    for (unsigned int i = 0; i < 14; ++i) {
+        int64_t value = 0;
+        for (uint32_t row = 0; row < 4; ++row) {
+            uint64_t diff = (uint64_t)(row ^ segment);
+            uint64_t nz = (diff | (UINT64_C(0) - diff)) >> 63;
+            int64_t mask = (int64_t)(nz - 1U);
+            value |= LOG2_COEFFS[row][i] & mask;
+        }
+        selected[i] = value;
+    }
+}
 
-    /*
-     * Step 4: Scale Remainder to get s in Q62.
-     *
-     * We need: s_exact = (rem / 2^63) / (1 + j/64)
-     *                   = (rem / 2^63) * InvD_exact
-     *
-     * InvD = round(InvD_exact * 2^62), so:
-     *   s = (rem * InvD) >> 63
-     *     = (rem * InvD) / 2^63, which gives Q62 result.
-     *
-     * rem is in [0, 2^57), InvD is in [2^61, 2^62], so the product fits in 128 bits.
-     * s is in [0, 1/64) in Q62, i.e., s < 2^62/64 = 2^56.
-     */
-    int64_t s = (int64_t)(((wide_uint128)rem * (uint64_t)InvD) >> 63);
+void approx_log2_sample(shuttle_log2_sample *out,
+                        const uint8_t random[SHUTTLE_LOG_RANDOM_BYTES],
+                        keccak_state *public_rng_state) {
+    int64_t coeffs[14];
+    unsigned int leading_zeros = clz80(random);
+    unsigned int consumed = SHUTTLE_LOG_EXPONENT_BLOCK_BITS;
 
-    /*
-     * Step 5: Horner Evaluation of Q(s) = c_0 + c_1*s + ... + c_8*s^8.
-     *
-     * All coefficients and s are in Q62.
-     * Horner: Q = c_8; for k=7..0: Q = Q*s/2^62 + c_k
-     * Each mul_q62(Q, s) computes (Q * s) >> 62, keeping Q62 format.
-     *
-     * Then: P = ln(1+s) = s * Q(s), computed as mul_q62(s, Q).
-     */
-    int64_t Q = QCOEFFS[8];
-    Q = mul_q62(Q, s) + QCOEFFS[7];
-    Q = mul_q62(Q, s) + QCOEFFS[6];
-    Q = mul_q62(Q, s) + QCOEFFS[5];
-    Q = mul_q62(Q, s) + QCOEFFS[4];
-    Q = mul_q62(Q, s) + QCOEFFS[3];
-    Q = mul_q62(Q, s) + QCOEFFS[2];
-    Q = mul_q62(Q, s) + QCOEFFS[1];
-    Q = mul_q62(Q, s) + QCOEFFS[0];
+    out->exponent = leading_zeros + 1U;
+    while (leading_zeros == SHUTTLE_LOG_EXPONENT_BLOCK_BITS
+           && consumed < SHUTTLE_LOG_EXPONENT_BITS) {
+        uint8_t extension[SHUTTLE_LOG_EXPONENT_BLOCK_BYTES];
+        shake256_squeeze(extension, sizeof extension, public_rng_state);
+        leading_zeros = clz80(extension);
+        out->exponent = consumed + leading_zeros + 1U;
+        consumed += SHUTTLE_LOG_EXPONENT_BLOCK_BITS;
+    }
 
-    /* P = s * Q(s) = ln(1 + s_frac) in Q62 */
-    int64_t P = mul_q62(s, Q);
+    /* The next eight bytes are read MSB-first; the low seven padding bits are
+     * discarded, leaving a uniform 57-bit mantissa integer. */
+    uint64_t mantissa =
+        load_be64(random + SHUTTLE_LOG_EXPONENT_BLOCK_BYTES) >> 7;
+    uint32_t segment = (uint32_t)(mantissa >> 55);
+    uint64_t local = mantissa & ((UINT64_C(1) << 55) - 1U);
+    int64_t x_q62 = (int64_t)(local << 7);
+    select_coefficients(coeffs, segment);
 
-    /*
-     * Step 6: Combine.
-     *
-     * ln(m_frac) = L + P  (L = ln(1+j/64), P = ln(1 + s_frac))
-     * ell = (e+1) * ln(2) - ln(m_frac)
-     *
-     * (e+1) * LN2_Q62: e+1 is at most 64, LN2_Q62 ~ 3.2e18.
-     * 64 * 3.2e18 ~ 2.04e20 < 2^68, so we need 128-bit or careful handling.
-     * Actually (e+1) <= 64, LN2_Q62 < 2^62, so (e+1)*LN2_Q62 < 64*2^62 = 2^68.
-     * This exceeds int64 range (2^63). So we use __int128 for this multiply.
-     */
-    int64_t ln_m = L + P;
+    int64_t z = coeffs[13];
+    for (int i = 12; i >= 0; --i)
+        z = coeffs[i] + round_shift_q62((wide_int128)z * x_q62);
 
-    /* (e+1) * LN2_Q62 can be up to 64 * 3.2e18 ~ 2.04e20, which exceeds
-     * int64 range (2^63 ~ 9.2e18). We compute in __int128 and clamp.
-    * For SHUTTLE parameters, ell values exceeding int64 only occur for
-     * extremely small r_rand, which always leads to acceptance (ell >> ln_M)
-     * and lands in a parity-invariant region (ell' > c_99). Clamping is safe. */
-    wide_int128 ell_wide = (wide_int128)(int64_t)(e + 1) * (wide_int128)LN2_Q62
-                         - (wide_int128)ln_m;
-
-    /* Constant-time saturating cast from int128 to int64. ell_wide is
-     * always non-negative (e >= 0, LN2_Q62 > 0, ln_m bounded above by
-     * LN2_Q62), so we only saturate on positive overflow.
-     *
-     * Overflow happens when the upper 64 bits do not match the sign
-     * extension of the lower 64 bits. */
-    int64_t ell_lo = (int64_t)ell_wide;
-    int64_t ell_hi = (int64_t)(ell_wide >> 64);
-    int64_t ell_hi_expected = ell_lo >> 63;
-    int64_t pos_ovf_mask = (ell_hi_expected - ell_hi) >> 63;  /* -1 if ell_hi > expected */
-    int64_t ell = (ell_lo & ~pos_ovf_mask) | (INT64_MAX & pos_ovf_mask);
-
-    return ell;
+    out->fraction_q62 = z;
 }

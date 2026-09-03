@@ -632,6 +632,54 @@ static int test_hint_pack_basic(void) {
   return 0;
 }
 
+/* ------------------------------------------------------------
+ * Test 11: injective HighBits representation used by seedC.
+ * ------------------------------------------------------------ */
+static int test_highbits_hash_pack(void) {
+  printf("Test 11: canonical HighBits representation for seedC\n");
+
+  polyveck w_h;
+  uint8_t packed[SHUTTLE_WHASH_PACKEDBYTES];
+  unsigned int i, j;
+  memset(&w_h, 0, sizeof w_h);
+
+  if ((SHUTTLE_HINT_MAX - 1) * SHUTTLE_ALPHA_H > UINT16_MAX)
+    FAIL("scaled HighBits domain exceeds uint16: max=%d",
+         (SHUTTLE_HINT_MAX - 1) * SHUTTLE_ALPHA_H);
+
+  w_h.vec[0].coeffs[0] = 1;
+  w_h.vec[0].coeffs[1] = SHUTTLE_HINT_MAX - 1;
+#if SHUTTLE_NIST_MODE == 120
+  /* The former one-byte cast mapped both bucket 0 and bucket 256 to 0. */
+  w_h.vec[0].coeffs[2] = 0;
+  w_h.vec[0].coeffs[3] = 256;
+#endif
+
+  polyveck_highbits_pack_hash(packed, &w_h);
+
+  for (i = 0; i < SHUTTLE_M; ++i) {
+    for (j = 0; j < SHUTTLE_N; ++j) {
+      unsigned int offset = 2U * (i * SHUTTLE_N + j);
+      uint16_t decoded = (uint16_t)packed[offset]
+                       | ((uint16_t)packed[offset + 1] << 8);
+      uint16_t expected = (uint16_t)(SHUTTLE_ALPHA_H
+                          * w_h.vec[i].coeffs[j]);
+      if (decoded != expected)
+        FAIL("HighBits hash encoding mismatch at [%u][%u]: %u vs %u",
+             i, j, decoded, expected);
+    }
+  }
+
+#if SHUTTLE_NIST_MODE == 120
+  if (packed[4] == packed[6] && packed[5] == packed[7])
+    FAIL("bucket 0 and bucket 256 still collide: encoding=%u",
+         (unsigned int)packed[4] | ((unsigned int)packed[5] << 8));
+#endif
+
+  PASS("all HighBits buckets use an injective uint16 little-endian encoding");
+  return 0;
+}
+
 /* ------------------------------------------------------------ */
 int main(void) {
   int ret = 0;
@@ -654,6 +702,7 @@ int main(void) {
   ret |= test_hint_wh_roundtrip();
   ret |= test_z2_recovery();
   ret |= test_hint_pack_basic();
+  ret |= test_highbits_hash_pack();
 
   if (ret == 0) {
     printf("\n=== All mod 2q tests PASSED ===\n");

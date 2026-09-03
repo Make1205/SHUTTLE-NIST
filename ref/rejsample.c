@@ -1,360 +1,144 @@
 /*
- * rejsample.c - Iterative Rejection Sampling for SHUTTLE (Simplified
- *               Log-Domain method).
+ * rejsample.c - Rejection-free iterative sampler for SHUTTLE.
  *
- * Overview:
- *   For each of tau challenge monomials x^{j_i}, the algorithm:
- *   1. Computes v_i = x^{j_i} * sk (cyclic rotation of the secret key vector)
- *   2. Computes u = <z, v_i> / sigma^2 in Q62 fixed-point
- *   3. Samples r_rand uniform in (0,1) as 64-bit integer
- *   4. Computes ell = -ln(r_rand) via ApproxNegLn
- *   5. Checks acceptance: ell >= ln_M
- *   6. Uses IntervalParity to determine the sign of the update
- *   7. Updates z = z +/- v_i (branchless)
- *
- * All operations are constant-time to prevent side-channel leakage.
- *
- * Key parameters (all driven by params.h via SHUTTLE_NIST_MODE):
- *   - sigma  = SHUTTLE_SIGMA  (70/82/99 for SHUTTLE-NIST-120/180/255)
- *   - N      = SHUTTLE_N      (256 for all NIST modes)
- *   - VECLEN = SHUTTLE_VECLEN (= 1 + L + M = 6/8/10)
- *   - tau    = SHUTTLE_TAU    (58/80/128)
+ * Each transition uses the paper's logarithmic interval test. A single
+ * inner product and the (shared) squared shift norm determine all interval
+ * boundaries. The logarithm is represented as an integer exponent plus a
+ * Q62 mantissa, and every scaled comparison is performed in signed 128-bit
+ * arithmetic. This avoids both reciprocal-rounding error and the wraparound
+ * that occurs when a complete logarithm is forced into signed Q62.
  */
 
-#include <string.h>
 #include "params.h"
 #include "rejsample.h"
-#include "approx_log.h"
-#include "approx_exp.h"  /* for wide_int128, wide_uint128 */
 
-/* ============================================================
- * Constants
- * ============================================================ */
+typedef __int128 wide_int128;
 
-/* Number of IntervalParity iterations. Must be exactly 37 for security. */
-#define IRS_PARITY_STEPS  37
-
-/* ============================================================
- * Constant-time helpers
- * ============================================================ */
-
-/*
- * ct_abs_i64 - Constant-time absolute value of int64_t.
- * Returns |x| without branching. Undefined for x = INT64_MIN.
- */
-static inline int64_t ct_abs_i64(int64_t x) {
-    int64_t mask = x >> 63;  /* 0 if x >= 0, -1 if x < 0 */
-    return (x ^ mask) - mask;
+static inline int64_t round_shift_q62(wide_int128 value) {
+    return (int64_t)((value + ((wide_int128)1 << 61)) >> 62);
 }
 
-/*
- * ct_neg_mask_i64 - Returns -1 (all ones) if x < 0, else 0.
- */
-static inline int64_t ct_neg_mask_i64(int64_t x) {
-    return x >> 63;
-}
-
-/* ============================================================
- * IntervalParity
- *
- * Determines the parity (even/odd) of the interval index k such that
- * ell_prime falls in [c_k, c_{k+1}).
- *
- * The interval boundaries are: c_k = k * abs_u + k^2 * gamma
- * Computed incrementally:
- *   c_0 = 0
- *   inc = abs_u + gamma        (= c_1)
- *   delta_inc = 2 * gamma
- *   c_{k+1} = c_k + inc; inc += delta_inc
- *
- * For each of the 37 configured steps, if ell_prime >= c_{k+1}, flip parity.
- *
- * All comparisons use uint64_t to handle potential overflow safely
- * (unsigned wrapping gives correct comparison for our value range).
- *
- * MUST run exactly IRS_PARITY_STEPS iterations (no early exit).
- * ============================================================ */
-static int interval_parity(int64_t ell_prime, int64_t abs_u, int64_t gamma) {
-    /*
-     * We use uint64_t arithmetic because the boundary values c_k can grow
-     * large (up to ~100*abs_u + 10000*gamma). For our parameters these
-     * stay within uint64 range, and unsigned comparison is well-defined
-     * even on overflow (wraps modulo 2^64).
-     */
-    uint64_t c = 0;
-    uint64_t inc = (uint64_t)abs_u + (uint64_t)gamma;
-    uint64_t delta = 2 * (uint64_t)gamma;
-    uint64_t ell_u = (uint64_t)ell_prime;
-    uint32_t parity = 0;
-
-    for (int k = 0; k < IRS_PARITY_STEPS; k++) {
-        c += inc;
-        inc += delta;
-        /* crossed = 1 if ell_prime >= c_{k+1}, else 0 */
-        uint32_t crossed = (uint32_t)(1 - ((ell_u - c) >> 63));
-        parity ^= crossed;
-    }
-
-    return (int)parity;
-}
-
-/* ============================================================
- * Cyclic shift: compute v = x^j * p mod (x^N + 1)
- *
- * For a polynomial p = [p_0, ..., p_{N-1}] in R = Z[x]/(x^N + 1):
- *   (x^j * p)_k = p_{k-j}      if k >= j
- *                -p_{N+k-j}     if k < j
- *
- * This rotates coefficients right by j positions, negating the
- * wrapped-around part due to the x^N + 1 relation.
- * ============================================================ */
 static void poly_cyclic_shift(poly *v, const poly *p, unsigned int j) {
-    unsigned int n = SHUTTLE_N;
-    for (unsigned int k = 0; k < n; k++) {
-        if (k >= j) {
+    for (unsigned int k = 0; k < SHUTTLE_N; ++k) {
+        if (k >= j)
             v->coeffs[k] = p->coeffs[k - j];
-        } else {
-            v->coeffs[k] = -p->coeffs[n + k - j];
-        }
+        else
+            v->coeffs[k] = -p->coeffs[SHUTTLE_N + k - j];
     }
 }
 
-/* ============================================================
- * polyvec_cyclic_shift: apply cyclic shift to each component
- * of a polyvec (length VECLEN = 6).
- * ============================================================ */
-static void polyvec_cyclic_shift(polyvec *v, const polyvec *sk, unsigned int j) {
-    for (int i = 0; i < SHUTTLE_VECLEN; i++) {
+static void polyvec_cyclic_shift(polyvec *v,
+                                 const polyvec *sk,
+                                 unsigned int j) {
+    for (unsigned int i = 0; i < SHUTTLE_VECLEN; ++i)
         poly_cyclic_shift(&v->vec[i], &sk->vec[i], j);
-    }
 }
 
-/* ============================================================
- * Inner product <z, v> for polyvec (VECLEN polynomials, N coefficients each).
- *
- * Returns the scalar sum: sum_{i=0}^{VECLEN-1} sum_{k=0}^{N-1} z[i][k] * v[i][k]
- *
- * Uses int64_t accumulator. For SHUTTLE parameters:
- *   |z[i][k]| <= ~5000 (Gaussian bounded), |v[i][k]| <= 26 (secret key bound)
- *   Max single product: 5000 * 26 = 130000
- *   Max sum: 6 * 256 * 130000 = 199,680,000
- *   Fits comfortably in int64.
- * ============================================================ */
 static int64_t polyvec_inner_product(const polyvec *z, const polyvec *v) {
     int64_t sum = 0;
-    for (int i = 0; i < SHUTTLE_VECLEN; i++) {
-        for (int k = 0; k < SHUTTLE_N; k++) {
-            sum += (int64_t)z->vec[i].coeffs[k] * (int64_t)v->vec[i].coeffs[k];
-        }
-    }
+    for (unsigned int i = 0; i < SHUTTLE_VECLEN; ++i)
+        for (unsigned int k = 0; k < SHUTTLE_N; ++k)
+            sum += (int64_t)z->vec[i].coeffs[k] * v->vec[i].coeffs[k];
     return sum;
 }
 
-/* ============================================================
- * Extract challenge positions from the challenge polynomial c.
- *
- * The challenge polynomial has exactly SHUTTLE_TAU nonzero coefficients,
- * each in {-1, +1}. We extract their positions and signs.
- *
- * positions[i] = index where c has a nonzero coefficient
- * signs[i]     = +1 or -1 (the coefficient value)
- * ============================================================ */
+/* Convert log2(U)=frac/2^62-a into 2r^2*ln(U), still in Q62.
+ * The mode-specific scale is C_r=round(2^62*2r^2*ln(2)), split at bit 62
+ * so that the fractional product stays within signed 128-bit arithmetic. */
+static wide_int128 scaled_log_q62(const shuttle_log2_sample *sample) {
+    wide_int128 scale = ((wide_int128)SHUTTLE_LOG_SCALE_HI << 62)
+                      + SHUTTLE_LOG_SCALE_LO;
+    wide_int128 fractional =
+        (wide_int128)SHUTTLE_LOG_SCALE_HI * sample->fraction_q62
+        + round_shift_q62((wide_int128)SHUTTLE_LOG_SCALE_LO
+                          * sample->fraction_q62);
+    return fractional - (wide_int128)sample->exponent * scale;
+}
+
+int irs_update_sign(int64_t inner_product,
+                    int64_t shift_norm_sq,
+                    const shuttle_log2_sample *log_sample) {
+    /* Normalize v to make <y,v> nonnegative. The final orientation maps the
+     * selected normalized shift back to the caller's original v. */
+    int64_t negative_mask = inner_product >> 63;
+    uint64_t t_abs = ((uint64_t)(inner_product ^ negative_mask)
+                     - (uint64_t)negative_mask);
+    int32_t orientation = (int32_t)(1 + 2 * negative_mask);
+    wide_int128 lambda_q62 = scaled_log_q62(log_sample);
+    uint32_t in_union = 0;
+    wide_int128 even_magnitude = 0;
+    wide_int128 increment = (wide_int128)2 * t_abs + shift_norm_sq;
+    wide_int128 twice_norm = (wide_int128)2 * shift_norm_sq;
+
+    /* N is odd for all parameter sets. Pair i represents the interval
+     * [A_{2i+1}, A_{2i}), so the largest tested shift magnitude is N.
+     * The squared-norm differences are advanced by the recurrence
+     * m(k+1)-m(k)=2|<y,v>|+(2k+1)||v||^2. */
+    for (unsigned int i = 0; i < (SHUTTLE_IRS_N + 1U) / 2U; ++i) {
+        wide_int128 lower_magnitude = even_magnitude + increment;
+        wide_int128 lower_q62 = -(lower_magnitude << 62);
+        wide_int128 upper_q62 = -(even_magnitude << 62);
+
+        uint32_t inside = (uint32_t)((lower_q62 <= lambda_q62)
+                                   & (lambda_q62 < upper_q62));
+        in_union |= inside;
+
+        even_magnitude = lower_magnitude + increment + twice_norm;
+        increment += twice_norm + twice_norm;
+    }
+
+    /* The paper's p_v is the probability of subtracting the normalized
+     * shift: membership in the interval union therefore selects -v. */
+    return orientation * (1 - 2 * (int32_t)in_union);
+}
+
 static void extract_challenge(unsigned int positions[SHUTTLE_TAU],
                               int32_t signs[SHUTTLE_TAU],
                               const poly *c) {
-    int count = 0;
-    for (int k = 0; k < SHUTTLE_N && count < SHUTTLE_TAU; k++) {
+    unsigned int count = 0;
+    for (unsigned int k = 0; k < SHUTTLE_N && count < SHUTTLE_TAU; ++k) {
         if (c->coeffs[k] != 0) {
-            positions[count] = (unsigned int)k;
+            positions[count] = k;
             signs[count] = c->coeffs[k];
-            count++;
+            ++count;
         }
     }
 }
 
-/* ============================================================
- * Single IRS step (Simplified Log-Domain).
- *
- * Given current z and a challenge vector v (= x^{j_i} * sk):
- *   1. u = <z, v> / sigma^2 in Q62
- *   2. ell = -ln(r_rand) via ApproxNegLn
- *   3. If ell < ln_M: reject
- *   4. ell_prime = ell - ln_M
- *   5. For u >= 0: par_A = IntervalParity(ell', u, gamma)
- *      For u <  0: par_B = IntervalParity(ell', -u, gamma) (equivalently)
- *   6. Branchless sign decision based on parity
- *   7. Update z = z +/- v
- *
- * Returns 1 if accepted, 0 if rejected.
- * ============================================================ */
-static int irs_step(polyvec *z,
-                    const polyvec *v,
-                    int64_t gamma_q62,
-                    int64_t ln_M_q62,
-                    uint64_t r_rand) {
-    /*
-     * Step 1: Compute u = <z, v> / sigma^2 in Q62.
-     *
-     * u_real = inner / sigma^2.
-     * u_q62 = u_real * 2^62 ~= inner * floor(2^62 / sigma^2)
-     *                        = inner * SHUTTLE_INV_SIGMA2_Q62.
-     *
-     * For SHUTTLE parameters, |inner| can reach ~2e8 (Cauchy-Schwarz bound)
-     * and SHUTTLE_INV_SIGMA2_Q62 is about 5e14--9e14 for these modes,
-     * so the product can reach ~8e22. That overflows int64 (max ~9.2e18) but
-     * we compute in __int128 and clamp: when |u| is very large the step
-     * always rejects (signing restarts), so clamping is safe.
-     */
-    int64_t inner = polyvec_inner_product(z, v);
-
-    wide_int128 u_wide = (wide_int128)inner * (wide_int128)SHUTTLE_INV_SIGMA2_Q62;
-    /* Constant-time saturating cast from int128 to int64.
-     * Overflow happens when the upper 64 bits do not equal the sign
-     * extension of the lower 64 bits. Two sign-bit masks select between
-     * -INT64_MAX, low64, and INT64_MAX without branching. */
-    int64_t u_lo = (int64_t)u_wide;
-    int64_t u_hi = (int64_t)(u_wide >> 64);
-    int64_t u_hi_expected = u_lo >> 63;
-    int64_t pos_ovf_mask = (u_hi_expected - u_hi) >> 63;  /* -1 if u_hi > expected */
-    int64_t neg_ovf_mask = (u_hi - u_hi_expected) >> 63;  /* -1 if u_hi < expected */
-    int64_t u_q62 = (u_lo  & ~pos_ovf_mask & ~neg_ovf_mask)
-                  | (INT64_MAX &  pos_ovf_mask)
-                  | (-INT64_MAX & neg_ovf_mask);
-
-    /* Step 2: Compute ell = -ln(r_rand) in Q62 */
-    int64_t ell = approx_neg_ln(r_rand);
-
-    /* Step 3: Acceptance check: ell >= ln_M */
-    /* If ell < ln_M, reject. For SHUTTLE with alpha >= 3, ln_M ~ 0 (nearly always accepts). */
-    if (ell < ln_M_q62) {
-        return 0;
-    }
-
-    /* Step 4: ell_prime = ell - ln_M */
-    int64_t ell_prime = ell - ln_M_q62;
-
-    /* Step 5: Compute IntervalParity for both sign cases.
-     *
-     * The Simplified Log-Domain algorithm needs to determine which "region"
-     * the current state falls in and the corresponding sign.
-     *
-     * For u >= 0 (Region A): par_pos = IntervalParity(ell', u, gamma)
-     * For u <  0 (Region B): par_neg = IntervalParity(ell', -u, gamma)
-     *
-     * The sign decision:
-     *   If u >= 0: sign = par_pos ? -1 : +1  (odd parity -> subtract v)
-     *   If u <  0: sign = par_neg ? +1 : -1  (odd parity -> add v)
-     *
-     * But we always compute both parities (constant-time) and select.
-     */
-    int64_t abs_u = ct_abs_i64(u_q62);
-    int par_pos = interval_parity(ell_prime, abs_u, gamma_q62);
-    /* par_neg is the parity for -u, which uses the same |u|.
-     * Actually, IntervalParity(ell', |u|, gamma) is the same regardless of sign of u.
-     * The sign of u only affects which parity interpretation to use.
-     *
-     * From Algorithm 6:
-     * - Compute par = IntervalParity(ell', |u|, gamma)
-     * - If u >= 0: sign_update = par ? -1 : +1
-     *              (odd parity = Region A rejection direction)
-     * - If u <  0: sign_update = par ? +1 : -1
-     *              (odd parity = Region B rejection direction)
-     *
-     * Branchless: sign_update = (u >= 0) ? (1 - 2*par) : (2*par - 1)
-     *           = (1 - 2*par) * sign(u >= 0 ? +1 : -1)
-     *           = (1 - 2*par) if u >= 0, -(1 - 2*par) if u < 0
-     */
-    int64_t u_neg_mask = ct_neg_mask_i64(u_q62);  /* -1 if u < 0, 0 if u >= 0 */
-    int32_t base_sign = 1 - 2 * par_pos;  /* +1 if even parity, -1 if odd */
-    /* Flip sign if u < 0: use XOR with sign bit */
-    int32_t flip = (int32_t)(u_neg_mask & 0xFFFFFFFF);
-    /* flip is -1 (0xFFFFFFFF) if u<0, 0 if u>=0 */
-    /* base_sign XOR flip trick: (base_sign ^ flip) - flip gives -base_sign when flip=-1 */
-    int32_t sign_update = (base_sign ^ flip) - flip;
-
-    /* Step 6: Update z = z + sign_update * v (branchless).
-     *
-     * sign_update is +1 or -1.
-     */
-    for (int i = 0; i < SHUTTLE_VECLEN; i++) {
-        for (int k = 0; k < SHUTTLE_N; k++) {
-            z->vec[i].coeffs[k] += sign_update * v->vec[i].coeffs[k];
-        }
-    }
-
-    return 1;  /* accepted */
-}
-
-/* ============================================================
- * Internal IRS loop.
- * ============================================================ */
-static int irs_loop(polyvec *z,
-                    const poly *c,
-                    const polyvec *sk_stretched,
-                    int64_t gamma_q62,
-                    int64_t ln_M_q62,
-                    keccak_state *rng_state) {
-
-    /* Extract challenge positions and signs */
-    unsigned int positions[SHUTTLE_TAU];
-    int32_t signs[SHUTTLE_TAU];
-    extract_challenge(positions, signs, c);
-
-    /* Temporary storage for the rotated secret key vector */
-    polyvec v;
-
-    /* Buffer for random bytes: 8 bytes per step for r_rand */
-    uint8_t randbuf[8];
-
-    /* Process each of the tau challenge monomials */
-    for (int step = 0; step < SHUTTLE_TAU; step++) {
-        unsigned int j = positions[step];
-        int32_t c_sign = signs[step];
-
-        /* Compute v = x^j * sk. If the challenge coefficient is -1,
-         * we negate v (since c_i * x^{j_i} * sk = c_i * v). */
-        polyvec_cyclic_shift(&v, sk_stretched, j);
-
-        /* Apply challenge sign: if c_sign == -1, negate all of v */
-        if (c_sign == -1) {
-            for (int i = 0; i < SHUTTLE_VECLEN; i++) {
-                for (int k = 0; k < SHUTTLE_N; k++) {
-                    v.vec[i].coeffs[k] = -v.vec[i].coeffs[k];
-                }
-            }
-        }
-
-        /* Sample 8 random bytes for r_rand */
-        shake256_squeeze(randbuf, 8, rng_state);
-
-        uint64_t r_rand = (uint64_t)randbuf[0]
-                        | ((uint64_t)randbuf[1] << 8)
-                        | ((uint64_t)randbuf[2] << 16)
-                        | ((uint64_t)randbuf[3] << 24)
-                        | ((uint64_t)randbuf[4] << 32)
-                        | ((uint64_t)randbuf[5] << 40)
-                        | ((uint64_t)randbuf[6] << 48)
-                        | ((uint64_t)randbuf[7] << 56);
-
-        /* Perform one IRS step. */
-        int accepted = irs_step(z, &v, gamma_q62, ln_M_q62, r_rand);
-
-        if (!accepted) {
-            return 0;  /* Rejection: caller must restart signing */
-        }
-    }
-
-    return 1;  /* All tau steps accepted */
-}
-
-/* ============================================================
- * irs_sign - Main iterative rejection sampling loop.
- * ============================================================ */
 int irs_sign(polyvec *z,
              const poly *c,
              const polyvec *sk_stretched,
-             int64_t gamma_q62,
-             int64_t ln_M_q62,
              keccak_state *rng_state) {
-    return irs_loop(z, c, sk_stretched, gamma_q62, ln_M_q62, rng_state);
+    unsigned int positions[SHUTTLE_TAU];
+    int32_t challenge_signs[SHUTTLE_TAU];
+    uint8_t random[SHUTTLE_TAU * SHUTTLE_LOG_RANDOM_BYTES];
+    int64_t shift_norm_sq = polyvec_sq_norm(sk_stretched);
+    polyvec v;
+
+    extract_challenge(positions, challenge_signs, c);
+    shake256_squeeze(random, sizeof random, rng_state);
+
+    for (unsigned int step = 0; step < SHUTTLE_TAU; ++step) {
+        polyvec_cyclic_shift(&v, sk_stretched, positions[step]);
+
+        /* This path also supports signed challenges, although the current
+         * challenge generator emits coefficients in {0,1}. */
+        int32_t c_sign = challenge_signs[step];
+        for (unsigned int i = 0; i < SHUTTLE_VECLEN; ++i)
+            for (unsigned int k = 0; k < SHUTTLE_N; ++k)
+                v.vec[i].coeffs[k] *= c_sign;
+
+        shuttle_log2_sample log_sample;
+        approx_log2_sample(&log_sample,
+                           random + step * SHUTTLE_LOG_RANDOM_BYTES,
+                           rng_state);
+        int32_t update_sign = irs_update_sign(
+            polyvec_inner_product(z, &v), shift_norm_sq, &log_sample);
+
+        for (unsigned int i = 0; i < SHUTTLE_VECLEN; ++i)
+            for (unsigned int k = 0; k < SHUTTLE_N; ++k)
+                z->vec[i].coeffs[k] += update_sign * v.vec[i].coeffs[k];
+    }
+
+    return 1;
 }

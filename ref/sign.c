@@ -54,15 +54,6 @@ static void compute_mu(uint8_t mu[SHUTTLE_CRHBYTES],
   shake256_squeeze(mu, SHUTTLE_CRHBYTES, &state);
 }
 
-static void pack_w_h_for_hash(uint8_t out[SHUTTLE_M * SHUTTLE_N],
-                              const polyveck *w_h)
-{
-  unsigned int i, j;
-  for(i = 0; i < SHUTTLE_M; ++i)
-    for(j = 0; j < SHUTTLE_N; ++j)
-      out[i * SHUTTLE_N + j] = (uint8_t)w_h->vec[i].coeffs[j];
-}
-
 static void compute_seed_c(uint8_t seed_c[SHUTTLE_CTILDEBYTES],
                               const polyveck *w_h,
                               const uint8_t w_0_bitmap[SHUTTLE_M * SHUTTLE_N / 8],
@@ -70,8 +61,8 @@ static void compute_seed_c(uint8_t seed_c[SHUTTLE_CTILDEBYTES],
                               const uint8_t rho[SHUTTLE_SEEDBYTES])
 {
   keccak_state state;
-  uint8_t w_h_packed[SHUTTLE_M * SHUTTLE_N];
-  pack_w_h_for_hash(w_h_packed, w_h);
+  uint8_t w_h_packed[SHUTTLE_WHASH_PACKEDBYTES];
+  polyveck_highbits_pack_hash(w_h_packed, w_h);
 
   shake256_init(&state);
   shake256_absorb(&state, w_h_packed, sizeof w_h_packed);
@@ -161,16 +152,12 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
   int64_t norm_sq;
   unsigned int i, j, n;
   unsigned int nonce = 0;
-  int irs_ok;
   int16_t y_buf0[SHUTTLE_N], y_buf1[SHUTTLE_N];
   int16_t y_buf2[SHUTTLE_N], y_buf3[SHUTTLE_N];
   uint8_t w_0_bitmap[SHUTTLE_M * SHUTTLE_N / 8];
 
   unpack_sk(rho, tr, key, &s, &e, sk);
   build_sk_full(&sk_full, &s, &e);
-
-  int64_t gamma_q62 = polyvec_sq_norm(&sk_full) * SHUTTLE_INV_2SIGMA2_Q62;
-  int64_t ln_M_q62  = 0;
 
   compute_mu(mu, tr, m, mlen);
 
@@ -255,10 +242,8 @@ int crypto_sign_signature(uint8_t *sig, size_t *siglen,
       shake256_absorb(&rng_state, irs_seed, sizeof(irs_seed));
       shake256_finalize(&rng_state);
 
-      irs_ok = irs_sign(&z, &c_poly, &sk_full,
-                        gamma_q62, ln_M_q62, &rng_state);
+      irs_sign(&z, &c_poly, &sk_full, &rng_state);
     }
-    if(!irs_ok) continue;
 
     poly z0_comp;
     poly_compress_y_slot0(&z0_comp, &z.vec[0]);
