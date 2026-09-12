@@ -1,5 +1,5 @@
 === Benchmark Environment ===
-OS: UUbuntu 26.04 LTS
+OS: Ubuntu 26.04 LTS
 Kernel: Linux 7.0.0-30-generic
 Compiler: gcc version 15.2.0 (Ubuntu 15.2.0-16ubuntu1)
 Build default: CC ?= gcc
