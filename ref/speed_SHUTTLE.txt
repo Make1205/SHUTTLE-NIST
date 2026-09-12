@@ -1,7 +1,7 @@
 === Benchmark Environment ===
-OS: Ubuntu 24.04.2 LTS (Noble Numbat)
-Kernel: Linux 6.11.0-26-generic x86_64
-Compiler: gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0
+OS: UUbuntu 26.04 LTS
+Kernel: Linux 7.0.0-30-generic
+Compiler: gcc version 15.2.0 (Ubuntu 15.2.0-16ubuntu1)
 Build default: CC ?= gcc
 CPU model: 11th Gen Intel(R) Core(TM) i7-11700K @ 3.60GHz
 CPU frequency: 3599.961 MHz current, 3600.0000 MHz max
@@ -9,50 +9,49 @@ Turbo Boost: disabled (intel_pstate/no_turbo = 1)
 Hyper-Threading: disabled (Thread(s) per core = 1)
 
 === SHUTTLE-NIST-120 Benchmarks (shuttle_nist120_ref) ===
-Parameters: N=256, Q=32257, L=3, M=2, SIGMA=67, TAU=58
-PK=992 bytes, SK=448 bytes, SIG=1153 bytes
+Parameters: N=256, Q=32257, L=3, M=2, SIGMA=70, TAU=58
+PK=992 bytes, SK=448 bytes, SIG=1175 bytes
 
 crypto_sign_keypair:
-median: 185414 cycles/ticks
-average: 199095 cycles/ticks
+median: 170516 cycles/ticks
+average: 176342 cycles/ticks
 
 crypto_sign_signature:
-median: 1500852 cycles/ticks
-average: 1538083 cycles/ticks
+median: 1405540 cycles/ticks
+average: 1406290 cycles/ticks
 
 crypto_sign_verify:
-median: 267318 cycles/ticks
-average: 267847 cycles/ticks
+median: 278002 cycles/ticks
+average: 276932 cycles/ticks
 
 === SHUTTLE-NIST-180 Benchmarks (shuttle_nist180_ref) ===
-Parameters: N=256, Q=15361, L=4, M=3, SIGMA=79, TAU=80
-PK=1376 bytes, SK=576 bytes, SIG=1565 bytes
+Parameters: N=256, Q=15361, L=4, M=3, SIGMA=82, TAU=80
+PK=1376 bytes, SK=576 bytes, SIG=1589 bytes
 
 crypto_sign_keypair:
-median: 327666 cycles/ticks
-average: 340918 cycles/ticks
+median: 295282 cycles/ticks
+average: 305348 cycles/ticks
 
 crypto_sign_signature:
-median: 2290054 cycles/ticks
-average: 2314111 cycles/ticks
+median: 2115958 cycles/ticks
+average: 2117160 cycles/ticks
 
 crypto_sign_verify:
-median: 434272 cycles/ticks
-average: 435019 cycles/ticks
+median: 441654 cycles/ticks
+average: 439213 cycles/ticks
 
 === SHUTTLE-NIST-255 Benchmarks (shuttle_nist255_ref) ===
-Parameters: N=256, Q=7681, L=5, M=4, SIGMA=90, TAU=128
-PK=1696 bytes, SK=704 bytes, SIG=1965 bytes
+Parameters: N=256, Q=7681, L=5, M=4, SIGMA=99, TAU=128
+PK=1696 bytes, SK=704 bytes, SIG=2013 bytes
 
 crypto_sign_keypair:
-median: 487610 cycles/ticks
-average: 507473 cycles/ticks
+median: 429864 cycles/ticks
+average: 446667 cycles/ticks
 
 crypto_sign_signature:
-median: 3553374 cycles/ticks
-average: 3588450 cycles/ticks
+median: 3154628 cycles/ticks
+average: 3155574 cycles/ticks
 
 crypto_sign_verify:
-median: 619976 cycles/ticks
-average: 621021 cycles/ticks
-
+median: 603736 cycles/ticks
+average: 609056 cycles/ticks
