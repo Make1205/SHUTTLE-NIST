@@ -1,279 +1,468 @@
-# SHUTTLE-NIST: Reference Implementation
+# Shuttle: Reference Implementation (ASIACRYPT 2026 Artifact)
 
-A portable C99 reference implementation of the **SHUTTLE-NIST** lattice-based signature scheme for three NIST classical-security levels: **120-bit (Level I)**, **180-bit (Level III)** and **255-bit (Level V)**.
+This repository is the artifact accompanying the paper
 
-This artifact is anonymized for review. It is a self-contained reference, intended for correctness and size validation, not for production deployment.
+> Yifan Ming, Jipeng Zhang, Zihan Liu, Guofeng Tang, Pengfei Chen,
+> Yutao Sun, Si Gao, Cong Zhang, Long Chen.
+> *Towards Practical Iterative Rejection Sampling. A Compact and
+> Efficient Signature over Module Lattices.* ASIACRYPT 2026.
+> Full version at <https://eprint.iacr.org/2026/1991>.
 
+It contains a portable C99 reference implementation of the Shuttle
+signature scheme (called SHUTTLE-NIST in the code) for the three
+parameter sets of the paper, targeting NIST security levels I, III and V
+(120, 180 and 255 bits of classical security). It also contains the test
+programs, benchmark programs, deterministic test-vector generators and
+Python scripts that support the size, parameter and performance claims
+of the paper.
 
-## 1. Algorithm Parameters
+The implementation is intended for validation and research. It is not
+hardened for production use, and no vectorized (AVX2) implementation is
+included. The artifact is self-contained (no external C library is
+required) and its public copy is at
+<https://github.com/Ji-Peng/SHUTTLE-NIST>.
 
-Symbols match the algorithm specification. All three modes use ring dimension `n = 256` and full NTT (`q ≡ 1 mod 2n`). HighBits of `z` and `hint` are encoded in one merged rANS stream. The shared frequency table is generated from the coefficient-count-weighted mixture of the rounded-response and bucket-crossing PMFs.
-
-| Symbol | Description | NIST-120 | NIST-180 | NIST-255 |
-| --- | --- | ---: | ---: | ---: |
-| `n` | Ring dimension | 256 | 256 | 256 |
-| `q` | Modulus | 32257 | 15361 | 7681 |
-| `lenS` | Polynomial components of `s` | 3 | 4 | 5 |
-| `lenE` | Polynomial components of `e` | 2 | 3 | 4 |
-| `eta` | CBD parameter of `s`, `e` | 1 | 1 | 1 |
-| `tau` | Hamming weight of challenge `c` | 58 | 80 | 128 |
-| `r` | Standard deviation of Gaussian sampling `y` | 70 | 82 | 99 |
-| `alpha_1` | CompressY step on slot 0 | 8 | 8 | 16 |
-| `alpha_h` | HighBits / MakeHint step | 128 | 128 | 128 |
-| `B_k` | Secret-key rejection bound | 25.79 | 30.4 | 34.4 |
-| `B_s` | Signature rejection bound | 3233 | 4312 | 5556 |
-| `B_v` | Verification bound | 4000 | 5250 | 6638 |
-| `\|seedC\|` | Challenge hash length (bytes) | 32 | 48 | 64 |
-| | MLWE (Core-SVP, bits) | 121.7 | 185.4 | 258.1 |
-| | MSIS (Core-SVP, bits) | 156.5 (124.6) | 225.4 (182.5) | 278.9 (227.8) |
-
-rANS implementation parameters (single merged stream):
-
-| Symbol | Description | NIST-120 | NIST-180 | NIST-255 |
-| --- | --- | ---: | ---: | ---: |
-| `alpha_r` | rANS hi/lo split step | 64 | 64 | 64 |
-| `alpha_0'` | Slot-0 secondary hi/lo split, `= alpha_r / alpha_1` | 8 | 8 | 4 |
-| `sigma_z-hi` | `= r / alpha_r` | 1.0938 | 1.2812 | 1.5469 |
-| `sigma_hint` | `= 2r / alpha_h` (equals `sigma_z-hi`) | 1.0938 | 1.2812 | 1.5469 |
-| `t` | rANS probability precision (sum of frequencies = `2^t`) | 10 | 10 | 10 |
-| `L_ren` | rANS renormalization threshold | `2^23` | `2^23` | `2^23` |
-| `M_voc` | Merged-stream vocabulary radius `[-M_voc, M_voc]` | 13 | 16 | 20 |
-| `n_b` | Merged-stream symbol count `= n*(lenS+1+lenE)` | 1536 | 2048 | 2560 |
-
-Sizes (measured from this implementation):
-
-| | NIST-120 | NIST-180 | NIST-255 |
-| --- | ---: | ---: | ---: |
-| Public-key size (bytes) | 992 | 1376 | 1696 |
-| Secret-key size (bytes) | 448 | 576 | 704 |
-| **Signature size (bytes)** | **1175** | **1589** | **2013** |
-| pk + sig (bytes) | 2167 | 2965 | 3709 |
-
-The signature layout is `seedC || uint16(rans_len) || rANS payload/padding || low bits`. IRS update signs are not serialized: verification regenerates the challenge from `seedC` and uses its parity. The rANS payload must consume its declared length exactly, its fixed-slot padding must be zero, and decoding must reproduce the same canonical byte stream.
-
-The BLISS-style discrete-Gaussian sampler uses `r = 64 * sigma_2`, with the exact values `sigma_2 = 70/64, 82/64, 99/64`. Its reverse cumulative distribution tables use 3 limbs of 31 bits (93-bit precision) and 12 / 14 / 17 entries, respectively. `ref/gen_rcdt_tables.py` deterministically regenerates the tables from the specified nonnegative discrete-Gaussian tails.
-
-Direct finite-distribution evaluation, including the Q63 acceptance threshold and all `n*(1+lenS+lenE)` mask coefficients, gives `M1 - 1 < 2^-86.78, 2^-85.45, 2^-87.83` at Rényi orders 240, 360, and 510, respectively.
-
-Iterated Rejection Sampling (IRS) uses the paper's odd truncation indices
-`N = 75, 89, 55`, respectively.  A transition tests `(N+1)/2` disjoint
-intervals. Its public random sample uses a 57-bit mantissa and a geometric
-exponent decoded lazily in 80-bit blocks, with a 32720-bit supported-range
-cutoff. The required cutoffs are 20940, 28383 and 19690 bits. Consequently,
-all `18*tau` ordinary-case bytes are squeezed in one batch; an extension is
-needed only with probability `2^-80`. The mantissa uses the four-segment
-degree-13 Q62 polynomial, and signed 128-bit arithmetic keeps interval
-boundaries exact over the supported range.
+In this README, "the paper" refers to the ASIACRYPT version and
+"the full version" refers to ePrint 2026/1991, which contains the
+appendices cited below.
 
 
-## 2. Repository Layout
+## 1. Quick Start
 
-```
-SHUTTLE-NIST/
-├── ref/                     # C reference implementation
-│   ├── config.h             # mode selector (SHUTTLE_NIST_MODE = 120 / 180 / 255)
-│   ├── params.h             # all per-mode parameters and derived constants
-│   ├── sign.{c,h}           # high-level keypair / sign / verify
-│   ├── packing.{c,h}        # pk / sk / signature serialization
-│   ├── shuttle_rans.{c,h}   # rANS encoder / decoder (single merged stream)
-│   ├── rans_tables.h        # auto-generated rANS frequency tables
-│   ├── sampler.{c,h}        # BLISS-style discrete Gaussian sampler
-│   ├── rcdt_tables.h         # auto-generated 93-bit reverse-CDT tables
-│   ├── rejsample.{c,h}      # iterative rejection sampling (IRS)
-│   ├── approx_exp.{c,h}     # constant-time fixed-point exp(-a)
-│   ├── approx_log.{c,h}     # segmented integer-only fixed-point log2(U)
-│   ├── poly.{c,h}           # single-polynomial operations
-│   ├── polyvec.{c,h}        # polynomial-vector operations
-│   ├── ntt.{c,h}            # NTT / inverse NTT
-│   ├── reduce.{c,h}         # modular reduction helpers
-│   ├── rounding.{c,h}       # HighBits / LowBits / MakeHint / UseHint
-│   ├── fips202.{c,h}        # SHAKE-256 (FIPS 202)
-│   ├── symmetric{.h,-shake.c}
-│   ├── randombytes.{c,h}    # OS RNG wrapper
-│   ├── gen_zetas.py         # regenerates ntt_constants.h
-│   ├── gen_approx_exp_tables.py  # regenerates approx_exp_constants.h
-│   ├── gen_rcdt_tables.py    # regenerates rcdt_tables.h
-│   ├── Makefile             # build driver (MODES = 120 180 255)
-│   ├── test/                # functional + benchmarking tests
-│   └── vector/              # KAT-vector generation
-└── tools/                   # offline analysis utilities (Python)
-    ├── gen_rans_tables.py   # regenerates ref/rans_tables.h
-    ├── SigSize.py           # Shannon lower bound + rANS reservation sizing
-    ├── rans.py              # pure-Python rANS reference
-    ├── test_rans_unified.py # rANS table / round-trip / corruption tests
-    └── kat_compare/         # cross-platform KAT comparison harness
-```
-
-Each mode is selected by the compile-time macro `SHUTTLE_NIST_MODE` (120 / 180 / 255). The Makefile builds all three side-by-side; symbols are namespace-prefixed as `shuttle_nist{120,180,255}_ref_*` so the three shared libraries can coexist.
-
-
-## 3. Build Requirements
-
-* A C99-capable compiler with support for `unsigned __int128` (tested with `gcc` and `clang` on x86-64 Linux).
-* GNU `make`.
-* Python 3.8+ (only needed to regenerate the auto-generated headers; the shipped headers are ready to compile).
-
-No external C dependencies; everything required is in this repository.
-
-
-## 4. Build
-
-From `SHUTTLE-NIST/ref/`:
+On a 64-bit Linux machine with GCC, GNU make and Python 3:
 
 ```bash
-make MODES="120 180 255"        # builds all three modes
-# or build a single mode:
-make MODES="120"
+cd ref
+make MODES="120 180 255"          # build everything (tens of seconds)
+make check MODES="120 180 255"    # run all correctness tests (~1 s)
+./test/out/speed_sign120          # benchmark Level I (~1 s)
+cd ../tools && python3 SigSize.py # reproduce signature sizes
 ```
 
-This produces, under `ref/test/out/`:
+A successful `make check` ends with the line
+`=== All mode check runs completed ===`. That line only states that all
+test programs were executed; Section 6 lists the per-test lines that
+indicate success, together with a one-liner that checks them all at
+once.
 
-* `libshuttle_nist{120,180,255}_ref.so` — shared libraries
-* per-mode test binaries: `test_sampler<m>`, `test_ntt<m>`, `test_mod2q<m>`, `test_rans<m>`, `test_poly_z1<m>`, `test_sig<m>`, `test_sign<m>`, `speed_sampler<m>`, `speed_sign<m>`, `profile_sign<m>`, `diag_sign<m>`
 
-Clean with `make clean`.
+## 2. Relation Between the Paper and the Artifact
+
+| Paper item | Artifact component | How to check |
+| --- | --- | --- |
+| Table 1, scheme parameters (n, q, l, m, eta, r, tau, alpha_h, alpha_1, B_k, B_s, B_v) | `ref/config.h`, `ref/params.h` | Inspect the files. `speed_sign<m>` prints the main parameters. |
+| Table 1 and Table 2 ("Ours"), pk and signature sizes | `ref/packing.c`, `ref/params.h` | `speed_sign<m>` prints `PK=`, `SK=` and `SIG=` in bytes; compare with Section 6. |
+| Table 1, MLWE and MSIS Core-SVP estimates | Not part of the artifact | Obtained with the Lattice Estimator [reference in the paper]. |
+| Table 2, sizes of the other schemes | Not produced here | Taken from the cited publications, except the Dilithium sizes, which are measured from its reference implementation. See Section 6. |
+| Table 3, sign and verify columns, and the abstract (1406k cycles) | `ref/test/speed_sign.c`, raw log `ref/speed_SHUTTLE.txt` | Section 6 of this README. |
+| Table 3, Dilithium and HAETAE columns, and the AVX2 estimates in Section 6.2 | Raw logs `ref/speed_dilithium.txt`, `ref/speed_dilithium_avx2.txt`, `ref/speed_HAETAE.txt`, `ref/speed_HAETAE_avx2.txt` | Logs only. See Section 4 for the upstream code. |
+| Table 7 of the full version (fixed-capacity rANS overflow estimates, abstract restart probability about 2^-30) | `ref/shuttle_rans.c`, `ref/packing.c`, `ref/rans_tables.h`, `tools/gen_rans_tables.py`, `tools/SigSize.py`, `tools/rans.py` | `python3 tools/SigSize.py`, `test_rans<m>`, `test_sig<m>`, `python3 tools/test_rans_unified.py`. See Section 6. |
+| Section 3.3, Figure 2 (transition T3), Algorithm 1 (IterSample) | `ref/rejsample.c` (`irs_update_sign`, `irs_sign`) | `test_irs<m>`, `test_sign<m>`. |
+| Theorem 3 and full version Appendix A.2 (integer logarithm, Table 4 coefficients) | `ref/approx_log.c` | `test_irs<m>` checks exponent decoding, monotonicity and accuracy. |
+| Full version Appendix A.3, truncation indices N = 75, 89, 55 | `SHUTTLE_IRS_N` in `ref/params.h` | Inspect the file. |
+| Section 6.2 and full version Appendix A.3 (discrete Gaussian sampler, Table 5) | `ref/sampler.c`, `ref/sampler_4x.c`, `ref/approx_exp.c`, `ref/rcdt_tables.h`, `ref/approx_exp_constants.h` | `test_sampler<m>`, `speed_sampler<m>`. Tables are regenerated by `ref/gen_rcdt_tables.py` and `ref/gen_approx_exp_tables.py`. |
+| Section 4.1 and Theorem 4 (stretch-and-compress) | `build_sk_full` in `ref/sign.c`, `poly_compress_y_slot0` in `ref/poly.c` | `test_poly_z1<m>`, `test_sign<m>`. |
+| Figure 3 (KeyGen, Sign, Verify) | `ref/sign.c` | `test_sign<m>`. |
+| Figure 3 (HighBits, hint computation and recovery of z_2) | `ref/rounding.c` | `test_mod2q<m>`. |
+| Section 5 and full version Appendices A.3 to A.8 (security proofs, Rényi accounting, min-entropy) | Not part of the code | These results are analytic and are stated in the full version. |
+
+The sizes of the other schemes in Table 2 are taken from the cited
+publications, except the Dilithium sizes, which come from its reference
+implementation.
 
 
-## 5. Correctness Testing
+## 3. Dependencies
 
-### 5.1 Full functional regression
+The artifact has no external C library dependencies. All required C
+sources, including SHAKE-256, are in this repository.
 
-From `SHUTTLE-NIST/ref/`:
+| Dependency | Required for | Versions used |
+| --- | --- | --- |
+| 64-bit Linux | everything | Ubuntu 26.04 LTS (Linux 7.0.0-30) for Table 3. Also tested on Ubuntu 24.04 LTS. |
+| C99 compiler with `__int128` | building | GCC 15.2.0 for Table 3. Also tested with GCC 13.3.0. Clang provides `__int128` and is expected to work, but it was not used for the paper results. |
+| GNU make | building | 4.3 |
+| Python 3, standard library only | size script, table regeneration, rANS cross-check | 3.8 or later, tested with 3.12.3 |
+| x86-64 CPU | benchmarks only | The cycle counter uses `rdtsc` (or `rdpmc`, see Section 5.6). Table 3 was measured on an Intel Core i7-11700K at 3.60 GHz with Turbo Boost and Hyper-Threading disabled. |
+
+All test programs and benchmarks are compiled with
+`-O3 -std=c99` (see `ref/Makefile`). The KAT generator uses `-O2`.
+
+
+## 4. Third-Party and Modified Code
+
+The following files are taken from, or adapted from, publicly available
+code and keep the licenses of their upstream projects (links below).
+Everything else in this repository was written for this work.
+
+| Files | Origin | Modifications |
+| --- | --- | --- |
+| `ref/fips202.c`, `ref/fips202.h` | Public-domain Keccak and SHAKE implementation used in the CRYSTALS reference implementations, based on the SUPERCOP `keccakc512/simple` code and TweetFips202 | Used essentially unchanged. |
+| `ref/test/cpucycles.c`, `ref/test/cpucycles.h`, `ref/test/speed_print.c`, `ref/test/speed_print.h` | CRYSTALS-Dilithium reference implementation (<https://github.com/pq-crystals/dilithium>) | Benchmark output adapted to print the SHUTTLE parameters and sizes. |
+| `ref/reduce.c`, parts of `ref/ntt.c`, `ref/poly.c`, `ref/packing.c`, `ref/randombytes.c` and the challenge sampler `poly_challenge` | Structure and several routines follow the CRYSTALS-Dilithium reference implementation | Adapted to the SHUTTLE moduli, to arithmetic modulo 2q, and to the SHUTTLE packing format. |
+
+All other components were written for this work. They include the
+iterative sampler, the integer logarithm, the discrete Gaussian sampler,
+the stretch-and-compress mechanism, the hint computation modulo 2q,
+the rANS codec and the signature format.
+
+The baseline numbers in Table 3 were obtained with the unmodified
+upstream reference implementations, using each project's default
+Makefile and benchmark program.
+
+* Dilithium, <https://github.com/pq-crystals/dilithium>, commit `6e00625`.
+* HAETAE, <https://github.com/kpqc-cryptocraft/KpqClean_ver2.git>,
+  commit `0896ebe`.
+
+Their source code is not redistributed here. Only the raw benchmark
+logs are included.
+
+
+## 5. Building, Running and Configuration
+
+All commands in this section are run from `ref/` unless stated otherwise.
+
+### 5.1 Parameter sets (modes)
+
+The parameter set is selected at compile time by the macro
+`SHUTTLE_NIST_MODE`, which takes the value `120`, `180` or `255`.
+The Makefile variable `MODES` lists the parameter sets to build. All
+symbols are prefixed with `shuttle_nist<m>_ref_`, so the three builds
+can coexist in one directory.
+
+```bash
+make MODES="120 180 255"   # all three parameter sets
+make MODES="180"           # a single parameter set
+make clean
+```
+
+Individual targets are also available, namely `test-sampler`,
+`test-ntt`, `test-mod2q`, `test-rans`, `test-poly-z1`, `test-sig`,
+`test-irs`, `test-sign`, `speed-sampler`, `speed-sign`, `profile-sign`
+and `libs`.
+
+The build produces, under `ref/test/out/`, the shared libraries
+`libshuttle_nist<m>_ref.so` and, for each mode `<m>`, the programs
+`test_sampler<m>`, `test_ntt<m>`, `test_mod2q<m>`, `test_rans<m>`,
+`test_poly_z1<m>`, `test_sig<m>`, `test_irs<m>`, `test_sign<m>`,
+`speed_sampler<m>`, `speed_sign<m>` and `profile_sign<m>`.
+
+`-Wpedantic` reports that `__int128` is not ISO C (in `approx_log.c` and
+`rejsample.c`); this warning is expected and harmless, and no other
+warning is expected.
+
+### 5.2 Correctness tests
 
 ```bash
 make check MODES="120 180 255"
 ```
 
-This runs, for every mode, the following test binaries in sequence and checks each for a `PASS` / `All * PASSED` line:
+For every mode this builds the test programs if needed and runs the
+following eight of them. `make check` echoes the last lines of each
+program; Section 6 lists the lines that indicate success.
 
-* `test_sampler<m>` — chi-squared / moment checks on the discrete Gaussian sampler against the target sigma.
-* `test_ntt<m>` — forward / inverse NTT round-trip and convolution against a schoolbook reference.
-* `test_mod2q<m>` — modular arithmetic, MakeHint / UseHint round-trip, `z_2` recovery.
-* `test_rans<m>` — rANS encode / decode round-trip on small and large inputs, empty-stream little-endian flush, and single-byte corruption detection.
-* `test_poly_z1<m>` — z-split / z-combine round-trip and full pack pipeline.
-* `test_sig<m>` — `pack_sig` / `unpack_sig` round-trip plus rejection of non-canonical rANS lengths and padding.
-* `test_irs<m>` — exponent/mantissa decoding, segmented-log monotonicity and accuracy, and wide-range IRS interval decisions.
-* `test_sign<m>` — end-to-end keypair / sign / verify, forgery and canonical-encoding rejection tests, legacy-length rejection, and a 100-round stress test.
+* `test_sampler<m>` compares the moments and the histogram of the
+  discrete Gaussian sampler with the target distribution.
+* `test_ntt<m>` checks the NTT round trip and multiplication against a
+  schoolbook reference.
+* `test_mod2q<m>` checks arithmetic modulo 2q, the hint round trip and
+  the recovery of z_2.
+* `test_rans<m>` checks rANS encoding and decoding on small and large
+  inputs, the little-endian flush of the final state, and the detection
+  of corrupted bytes.
+* `test_poly_z1<m>` checks splitting, merging and packing of z_1.
+* `test_sig<m>` checks signature packing and unpacking, the rejection of
+  non-canonical encodings (declared rANS length and padding), and reports
+  the observed rANS lengths against the reserved capacity.
+* `test_irs<m>` checks the exponent and mantissa decoding, the
+  monotonicity and accuracy of the segmented integer logarithm, and the
+  wide-range interval decisions of the iterative sampler.
+* `test_sign<m>` runs key generation, signing and verification,
+  rejection of forged and non-canonical signatures, and a 100-round
+  stress test over random messages.
 
-A successful run prints `All * tests PASSED` for each binary and ends with `All mode check runs completed`.
-
-### 5.2 KAT (Known-Answer Test) generation
+### 5.3 Known-answer test vectors
 
 ```bash
-cd SHUTTLE-NIST/ref/vector
-make NROUNDS=10  # builds generators and writes KAT files for all three modes
+cd vector
+make NROUNDS=10
 ```
 
-`gen_vectors_mode<m>` uses the deterministic SHAKE-256 DRBG in `rng.c`, so output is byte-identical across platforms.
-
-### 5.3 Python reference cross-check
+This builds `gen_vectors_mode<m>` for the three modes and writes nine
+files into `ref/vector/`, namely `keygen_mode<m>.kat`,
+`sign_mode<m>.kat` and `verify_mode<m>.kat` for m = 120, 180 and 255.
+The generator uses the deterministic SHAKE-256 DRBG in `vector/rng.c`,
+so the output does not depend on the platform. To check this, hash the
+files once, regenerate them and compare:
 
 ```bash
-cd SHUTTLE-NIST/tools
+sha256sum *_mode*.kat > /tmp/kat.sha256
+make NROUNDS=10
+sha256sum -c /tmp/kat.sha256
+```
+
+`NROUNDS` sets the number of key-generation, signing and verification
+rounds per file. The `.kat` files themselves are regenerated on demand
+and are not shipped, to keep the repository small.
+
+### 5.4 Signature-size reproduction
+
+```bash
+cd ../tools
+python3 SigSize.py
 python3 test_rans_unified.py
 ```
 
-This validates the auto-generated rANS frequency tables (alphabet geometry, frequency sums, vocabulary radii) and exercises the pure-Python rANS reference (`rans.py`) on samples from the analytic merged PMF.
+`SigSize.py` recomputes the Shannon lower bound, the byte breakdown of
+the signature and the rANS reservations behind Table 7 of the full
+version; the expected values are listed in Section 6.
+`test_rans_unified.py` validates the generated rANS frequency tables
+(alphabet geometry, frequency sums, vocabulary radii), the little-endian
+flush and the corruption detection of the Python reference encoder and
+decoder `rans.py`; it ends with `All rANS unified tests PASSED.`
 
+### 5.5 Regenerating the precomputed tables
 
-## 6. Performance Testing
-
-### 6.1 Signature throughput
-
-From `SHUTTLE-NIST/ref/`:
-
-```bash
-./test/out/speed_sign120
-./test/out/speed_sign180
-./test/out/speed_sign255
-```
-
-Each binary measures cycles-per-call for `crypto_sign_keypair`, `crypto_sign_signature` and `crypto_sign_verify` using the platform's `rdtsc`-equivalent cycle counter (`test/cpucycles.c`). On x86-64 we pin to a single core and disable Turbo / SMT for reproducibility:
-
-```bash
-# Recommended:
-sudo cpupower frequency-set --governor performance
-taskset -c 0 ./test/out/speed_sign120
-```
-
-`speed_sign<m>` reports min, median and average over a large number of iterations. Use the median as the headline number.
-
-### 6.2 Sampler microbenchmark
-
-```bash
-./test/out/speed_sampler<m>
-```
-
-Reports cycles per sample for the BLISS-style discrete Gaussian sampler in isolation.
-
-### 6.3 Signature-size reproducibility
-
-```bash
-cd SHUTTLE-NIST/tools
-python3 SigSize.py
-```
-
-Prints the Shannon lower bound, the per-component byte breakdown, and the rANS reservation `R` at three target overflow probabilities (`2^-20`, `2^-30`, `2^-40`). The implementation uses `p_rans^* = 2^-30`.
-
-
-## 7. Reproducibility Notes
-
-* `randombytes.c` uses `getrandom(2)` on Linux. Deterministic vector generation substitutes the SHAKE-256 DRBG in `vector/rng.c`.
-* All auto-generated headers are regenerable bit-for-bit from the Python scripts in `ref/` and `tools/`. Run:
+From the repository root, the four scripts below regenerate every
+precomputed header from its defining formulas. No empirical data are
+involved.
 
 ```bash
 python3 ref/gen_zetas.py
 python3 ref/gen_approx_exp_tables.py
 python3 ref/gen_rcdt_tables.py
 python3 tools/gen_rans_tables.py --out ref/rans_tables.h
+git status --porcelain ref/   # empty output means identical
 ```
 
-These four scripts regenerate every auto-generated header from first-principles math (no empirical samples).
-* The IRS routine, the discrete Gaussian sampler and the inner approximations (`approx_exp`, `approx_log`) have fixed control flow and fixed memory access with respect to secret-dependent data. The segmented-log coefficient row is selected by a masked scan. Lazy exponent extension changes control flow only as a function of public randomness.
-* `__int128` is used in `approx_exp.c`, `approx_log.c`, `rejsample.c` and `sampler.c` for fixed-point products and overflow-free IRS interval boundaries. Both `gcc` and `clang` provide native support on the stated x86-64 target.
+If the artifact was obtained as an archive rather than a git clone,
+copy `ref/` before running the scripts and compare afterwards, for
+example with `diff -r ref.orig ref`.
+
+### 5.6 Benchmarks
+
+```bash
+make speed-sign MODES="120 180 255"
+sudo cpupower frequency-set --governor performance
+taskset -c 0 ./test/out/speed_sign120
+taskset -c 0 ./test/out/speed_sign180
+taskset -c 0 ./test/out/speed_sign255
+./test/out/speed_sampler120   # sampler only, cycles per sample
+```
+
+Each `speed_sign<m>` runs key generation, signing and verification
+1000 times and reports the median and the average of each operation.
+For stable numbers, disable Turbo Boost and Hyper-Threading, as was done
+for Table 3, and pin the process to one core. Compiling with
+`-DUSE_RDPMC` (for example `make speed-sign CC="gcc -DUSE_RDPMC"`)
+switches the cycle counter from `rdtsc` to `rdpmc`, which requires
+`echo 2 > /sys/devices/cpu/rdpmc`.
 
 
-## 8. Benchmark Results
+## 6. Interpreting the Output
 
-> All numbers below are from **portable C reference implementations** (no AVX2 / SSE / NEON vectorization), measured by `rdtsc`-class cycle counter. Raw logs are in [`ref/speed_SHUTTLE.txt`](ref/speed_SHUTTLE.txt), [`ref/speed_HAETAE.txt`](ref/speed_HAETAE.txt), [`ref/speed_dilithium.txt`](ref/speed_dilithium.txt).
+**Tests.** `make check` prints the last lines of each test program.
+For each of the three modes, a successful run contains the final lines
+listed below, and the whole run ends with
+`=== All mode check runs completed ===`. That last line only indicates
+that all programs were executed, so please check the per-test lines.
 
-### 8.1 Platform
+| Program | Final line on success |
+| --- | --- |
+| `test_sampler<m>` | `=== Overall: ALL PASSED ===` |
+| `test_ntt<m>` | `All NTT tests passed!` |
+| `test_mod2q<m>` | `=== All mod 2q tests PASSED ===` |
+| `test_rans<m>` | `=== All rANS tests PASSED ===` |
+| `test_poly_z1<m>` | `=== All polyz1 tests PASSED ===` |
+| `test_sig<m>` | `=== All sig tests PASSED ===` |
+| `test_irs<m>` | `=== All IRS tests PASSED ===` |
+| `test_sign<m>` | `=== All sign tests PASSED ===` |
 
-* OS: Ubuntu 24.04.2 LTS (kernel 6.11.0-26-generic, x86_64)
-* CPU: 11th Gen Intel(R) Core(TM) i7-11700K @ 3.60 GHz (fixed)
-* Turbo Boost: **disabled** (`intel_pstate/no_turbo = 1`)
-* Hyper-Threading: **disabled** (one thread per core)
-* Compiler: gcc 13.3.0 (Ubuntu 13.3.0-6ubuntu2~24.04)
-* Build: each scheme's default Makefile (`CC ?= gcc`); no `-mavx2`, no hand-written assembly. Reference C only.
+The following one-liner counts these success lines and should print 24
+(8 programs times 3 modes).
 
-### 8.2 Per-mode cycle counts
+```bash
+make check MODES="120 180 255" 2>&1 \
+  | grep -c -E "ALL PASSED|tests passed!|tests PASSED"
+```
 
-Cycle counts have not been refreshed for the current parameter constants. Run `make speed-sign` on the platform above before publishing new figures; archived logs are not treated as current measurements.
+**Sizes.** The header of `speed_sign<m>` prints the parameters and the
+sizes, for example
 
+```
+=== SHUTTLE-NIST-120 Benchmarks (shuttle_nist120_ref) ===
+Parameters: N=256, Q=32257, L=3, M=2, SIGMA=70, TAU=58
+PK=992 bytes, SK=448 bytes, SIG=1175 bytes
+```
 
-## 9. Comparison with Related Schemes
+The values must match Table 1 exactly.
 
-> All schemes compared in this section are **reference (portable C) implementations without AVX2 / vector optimization**, measured on the platform of §8.1.
+| | Level I (120) | Level III (180) | Level V (255) |
+| --- | ---: | ---: | ---: |
+| Public key (bytes) | 992 | 1376 | 1696 |
+| Secret key (bytes) | 448 | 576 | 704 |
+| Signature (bytes) | 1175 | 1589 | 2013 |
 
-### 9.1 Size
+The signature layout is `seedC || uint16(rANS length) || rANS payload
+with fixed-slot zero padding || low bits`. The IRS update signs are not
+serialized: verification regenerates the challenge from `seedC` and uses
+its parity, and `test_sig<m>` rejects encodings whose padding is not
+zero or whose declared rANS length is not consumed exactly.
 
-| Scheme | Level | pk (B) | sig (B) | pk + sig (B) |
+**Cycle counts.** Each `speed_sign<m>` reports the median and the
+average for `crypto_sign_keypair`, `crypto_sign_signature` and
+`crypto_sign_verify`. Table 3 of the paper reports the **average**
+divided by 1000 and rounded to the nearest integer. The averages in the
+archived log `ref/speed_SHUTTLE.txt` are
+
+| Operation | NIST-120 | NIST-180 | NIST-255 |
+| --- | ---: | ---: | ---: |
+| `crypto_sign_keypair` | 176 342 | 305 348 | 446 667 |
+| `crypto_sign_signature` | 1 406 290 | 2 117 160 | 3 155 574 |
+| `crypto_sign_verify` | 276 932 | 439 213 | 609 056 |
+
+which gives Table 3 of the paper, together with the baselines read from
+`ref/speed_dilithium.txt` and `ref/speed_HAETAE.txt` (average over 1000
+runs, average divided by 1000 and rounded):
+
+| Security level | Shuttle sign | Shuttle verify | Dilithium sign | Dilithium verify | HAETAE sign | HAETAE verify |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 120 | 1406k | 277k | 1331k | 320k | 4466k | 210k |
+| 180 | 2117k | 439k | 2025k | 495k | 5689k | 370k |
+| 255 | 3156k | 609k | 2559k | 823k | 8472k | 462k |
+
+The Shuttle numbers were measured with GCC 15.2.0 on Ubuntu 26.04 LTS,
+whereas the Dilithium and HAETAE numbers were measured on the same CPU
+with GCC 13.3.0 on Ubuntu 24.04 LTS; the effect of the OS and compiler
+change has not been isolated. Absolute cycle counts also depend on the
+CPU and on the system configuration, so they will differ on other
+machines; what should be reproducible is the relative behaviour, namely
+the ratios between the three levels and between signing and
+verification. The archived logs contain the medians as well as the
+averages, and the benchmark environment used for Table 3.
+
+**Signature-size script.** For each mode, `SigSize.py` prints the
+Shannon lower bound, a byte breakdown of the signature and the rANS
+reservation `R(B)` for the target overflow probabilities 2^-20, 2^-30
+and 2^-40. The implementation targets `p_rans^* = 2^-30`
+(`SHUTTLE_RANS_RESERVED_BYTES` in `ref/params.h`), which is the row
+reported in Table 7 of the full version, and the line `Actual sig` gives
+the signature size of Table 1.
+
+| Level | M_voc | mu_L | sigma_L | R at 2^-30 (bytes) | Signature (bytes) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 120 | 13 | 439.19 | 4.86 | 469 | 1175 |
+| 180 | 16 | 640.59 | 5.63 | 675 | 1589 |
+| 255 | 20 | 885.49 | 6.19 | 923 | 2013 |
+
+**Size comparison (Table 2).** The Shuttle columns of Table 2 are the
+sizes above; the remaining rows are the published sizes of the two
+baseline schemes, whose code is not part of this artifact.
+
+| Level | Scheme | pk (B) | Signature (B) | pk + sig (B) |
 | --- | --- | ---: | ---: | ---: |
-| **SHUTTLE-NIST** | I (120) | 992 | 1175 | **2 167** |
-| HAETAE | I (120) | 992 | 1474 | 2 466 |
-| Dilithium / ML-DSA | 2 | 1312 | 2420 | 3 732 |
-| **SHUTTLE-NIST** | III (180) | 1376 | 1589 | **2 965** |
-| HAETAE | III (180) | 1472 | 2349 | 3 821 |
-| Dilithium / ML-DSA | 3 | 1952 | 3309 | 5 261 |
-| **SHUTTLE-NIST** | V (255) | 1696 | 2013 | **3 709** |
-| HAETAE | V (260) | 2080 | 2948 | 5 028 |
-| Dilithium / ML-DSA | 5 | 2592 | 4627 | 7 219 |
+| I (120) | **Shuttle** | 992 | 1175 | **2 167** |
+| I (120) | HAETAE-120 | 992 | 1474 | 2 466 |
+| I (120) | Dilithium-2 | 1312 | 2420 | 3 732 |
+| III (180) | **Shuttle** | 1376 | 1589 | **2 965** |
+| III (180) | HAETAE-180 | 1472 | 2349 | 3 821 |
+| III (180) | Dilithium-3 | 1952 | 3309 | 5 261 |
+| V (255) | **Shuttle** | 1696 | 2013 | **3 709** |
+| V (255) | HAETAE-260 | 2080 | 2948 | 5 028 |
+| V (255) | Dilithium-5 | 2592 | 4627 | 7 219 |
 
-### 9.2 Performance
+**Test vectors.** The nine `.kat` files of Section 5.3 are regenerated
+from the deterministic DRBG in `vector/rng.c`. After hashing them once,
+regenerating them and verifying the hashes with `sha256sum -c`, every
+file should report `OK`; the same hashes can be compared across
+machines.
 
-No current SHUTTLE-NIST cycle comparison is reported until the revised constants are benchmarked on the platform in Section 8.1.
+**Table regeneration.** After running the four scripts of Section 5.5,
+`git status` should report no modified files.
 
 
-## 10. License
+## 7. Source Code Organization
 
-This artifact is released for academic review purposes. License terms will be specified in the camera-ready version.
+```
+SHUTTLE-NIST/
+├── README.md
+├── LICENSE
+├── ref/                          C reference implementation
+│   ├── config.h                  mode selection (120 / 180 / 255)
+│   ├── params.h                  parameters and derived constants
+│   ├── api.h                     NIST / SUPERCOP style API
+│   ├── sign.{c,h}                KeyGen, Sign, Verify (Figure 3)
+│   ├── rejsample.{c,h}           iterative sampler (Sec. 3.3, Alg. 1)
+│   ├── approx_log.{c,h}          integer log2 of the uniform sample
+│   ├── sampler.c, sampler_4x.c   discrete Gaussian sampler
+│   ├── approx_exp.{c,h}          fixed-point exp(-a) for the sampler
+│   ├── rounding.{c,h}            HighBits, hints, z_2 recovery
+│   ├── packing.{c,h}             key and signature encoding
+│   ├── shuttle_rans.{c,h}        rANS encoder and decoder
+│   ├── poly.{c,h}, polyvec.{c,h} polynomial arithmetic, CompressY
+│   ├── ntt.{c,h}, reduce.{c,h}   NTT and modular reduction
+│   ├── fips202.{c,h}, symmetric* SHAKE-256
+│   ├── randombytes.{c,h}         OS randomness (getrandom)
+│   ├── *_tables.h, *_constants.h generated tables
+│   ├── gen_*.py                  table generators
+│   ├── speed_*.txt               raw benchmark logs for Table 3
+│   ├── Makefile
+│   ├── test/                     tests, benchmarks, cycle counter
+│   └── vector/                   KAT generator
+└── tools/                        Python utilities
+    ├── SigSize.py                signature-size and rANS sizing
+    ├── gen_rans_tables.py        generates ref/rans_tables.h
+    ├── rans.py                   pure-Python rANS reference
+    ├── test_rans_unified.py      rANS table and round-trip tests
+    └── kat_compare/              KAT comparison against another
+                                  implementation of the same scheme
+```
+
+The high-level flow is `sign.c`, which calls the Gaussian sampler
+(`sampler*.c`) for the mask, computes the commitment with the NTT
+(`poly*.c`, `ntt.c`), runs the iterative sampler (`rejsample.c`,
+`approx_log.c`), compresses the response (`poly.c`, `rounding.c`) and
+finally encodes the signature (`packing.c`, `shuttle_rans.c`).
+
+
+## 8. Notes and Limitations
+
+* Only the portable reference implementation is provided. The AVX2
+  figures in Section 6.2 of the paper are estimates and are not
+  produced by this artifact.
+* The routines that handle secret data are written with fixed control
+  flow and secret-independent memory accesses. The only input-dependent
+  branch in the iterative sampler is the lazy exponent extension in
+  `approx_log.c`, which depends only on the uniform sample and occurs
+  with probability 2^-80. This property has not been verified with
+  formal or statistical constant-time tools.
+* `randombytes.c` uses `getrandom(2)` on Linux. The KAT generator
+  replaces it with the deterministic DRBG in `vector/rng.c`.
+* The artifact has also been built and run under Ubuntu 22.04 LTS with
+  GCC 11.4.0, in addition to the environments listed in Section 3. The
+  cycle counts of Section 6 are those of the archived logs, not of a
+  re-run on another machine.
+
+
+## 9. License
+
+The code written for this work is released under the MIT License (see
+`LICENSE`). Third-party components keep their original licenses; they
+are listed with their origins in Section 4.
+
+
+## 10. Citation
+
+```bibtex
+@inproceedings{shuttle2026,
+  author    = {Yifan Ming and Jipeng Zhang and Zihan Liu and
+               Guofeng Tang and Pengfei Chen and Yutao Sun and
+               Si Gao and Cong Zhang and Long Chen},
+  title     = {Towards Practical Iterative Rejection Sampling:
+               A Compact and Efficient Signature over Module
+               Lattices},
+  booktitle = {Advances in Cryptology -- ASIACRYPT 2026},
+  year      = {2026},
+  note      = {Full version at
+               \url{https://eprint.iacr.org/2026/1991}}
+}
+```
