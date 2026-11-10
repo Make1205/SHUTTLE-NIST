@@ -1,0 +1,195 @@
+{
+  "scheme": "SHUTTLE",
+  "initial_commit": "34bf327eee9459a9b29d271a43c305f4b0b8b374",
+  "tested_commit": "34bf327eee9459a9b29d271a43c305f4b0b8b374",
+  "sets": [
+    {
+      "name": "120",
+      "paper_pk": 992,
+      "paper_sig": 1175,
+      "paper_q": 32257,
+      "variants": [
+        {
+          "name": "ref",
+          "cwd": "ref",
+          "flags": [
+            "-DSHUTTLE_NIST_MODE=120",
+            "-fno-tree-vectorize",
+            "-fno-tree-slp-vectorize"
+          ],
+          "sources": [
+            "fips202.c",
+            "symmetric-shake.c",
+            "approx_exp.c",
+            "approx_log.c",
+            "sampler.c",
+            "sampler_4x.c",
+            "rejsample.c",
+            "reduce.c",
+            "ntt.c",
+            "poly.c",
+            "polyvec.c",
+            "rounding.c",
+            "shuttle_rans.c",
+            "packing.c",
+            "sign.c"
+          ],
+          "extra_sources": [
+            {
+              "path": "randombytes.c",
+              "flags": [
+                "-Drandombytes=bench_native_randombytes"
+              ]
+            },
+            {
+              "path": "../bench/rng.c"
+            }
+          ],
+          "libs": [
+            "-lm"
+          ],
+          "kat": [
+            {
+              "name": "vectors",
+              "sources": [
+                "vector/gen_vectors.c",
+                "vector/rng.c"
+              ],
+              "args": [
+                ".",
+                "10"
+              ],
+              "expect": "OK (10 rounds)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "180",
+      "paper_pk": 1376,
+      "paper_sig": 1589,
+      "paper_q": 15361,
+      "variants": [
+        {
+          "name": "ref",
+          "cwd": "ref",
+          "flags": [
+            "-DSHUTTLE_NIST_MODE=180",
+            "-fno-tree-vectorize",
+            "-fno-tree-slp-vectorize"
+          ],
+          "sources": [
+            "fips202.c",
+            "symmetric-shake.c",
+            "approx_exp.c",
+            "approx_log.c",
+            "sampler.c",
+            "sampler_4x.c",
+            "rejsample.c",
+            "reduce.c",
+            "ntt.c",
+            "poly.c",
+            "polyvec.c",
+            "rounding.c",
+            "shuttle_rans.c",
+            "packing.c",
+            "sign.c"
+          ],
+          "extra_sources": [
+            {
+              "path": "randombytes.c",
+              "flags": [
+                "-Drandombytes=bench_native_randombytes"
+              ]
+            },
+            {
+              "path": "../bench/rng.c"
+            }
+          ],
+          "libs": [
+            "-lm"
+          ],
+          "kat": [
+            {
+              "name": "vectors",
+              "sources": [
+                "vector/gen_vectors.c",
+                "vector/rng.c"
+              ],
+              "args": [
+                ".",
+                "10"
+              ],
+              "expect": "OK (10 rounds)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "255",
+      "paper_pk": 1696,
+      "paper_sig": 2013,
+      "paper_q": 7681,
+      "variants": [
+        {
+          "name": "ref",
+          "cwd": "ref",
+          "flags": [
+            "-DSHUTTLE_NIST_MODE=255",
+            "-fno-tree-vectorize",
+            "-fno-tree-slp-vectorize"
+          ],
+          "sources": [
+            "fips202.c",
+            "symmetric-shake.c",
+            "approx_exp.c",
+            "approx_log.c",
+            "sampler.c",
+            "sampler_4x.c",
+            "rejsample.c",
+            "reduce.c",
+            "ntt.c",
+            "poly.c",
+            "polyvec.c",
+            "rounding.c",
+            "shuttle_rans.c",
+            "packing.c",
+            "sign.c"
+          ],
+          "extra_sources": [
+            {
+              "path": "randombytes.c",
+              "flags": [
+                "-Drandombytes=bench_native_randombytes"
+              ]
+            },
+            {
+              "path": "../bench/rng.c"
+            }
+          ],
+          "libs": [
+            "-lm"
+          ],
+          "kat": [
+            {
+              "name": "vectors",
+              "sources": [
+                "vector/gen_vectors.c",
+                "vector/rng.c"
+              ],
+              "args": [
+                ".",
+                "10"
+              ],
+              "expect": "OK (10 rounds)"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "dependencies": [],
+  "notes": "Only the upstream portable reference exists. sampler_4x is scalar interleaving, not AVX2; AVX2 is unavailable (--). Contrary to the variable-length expectation, this revision always emits SHUTTLE_BYTES and verifies that exact size. The internal rANS payload is variable and padded; unpadded length reads its explicit two-byte little-endian length after seedC and excludes only unused rANS reservation bytes. KAT: original deterministic vector generator, ten rounds with original/tampered-signature/tampered-message checks. No expanded-key API. Timing uses native randombytes; fixed-seed checks use bench entropy."
+}

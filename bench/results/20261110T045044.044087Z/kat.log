@@ -1,0 +1,21 @@
+$ /workspace/SHUTTLE-NIST/bench/results/20261110T045044.044087Z/work/120-ref/vectors . 10
+[gen_vectors] SHUTTLE-NIST-120, mode=120, nrounds=10
+[gen_vectors] master seed = a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecf
+  writing ./keygen_mode120.kat
+  writing ./sign_mode120.kat
+  writing ./verify_mode120.kat
+[gen_vectors] OK (10 rounds)
+$ /workspace/SHUTTLE-NIST/bench/results/20261110T045044.044087Z/work/180-ref/vectors . 10
+[gen_vectors] SHUTTLE-NIST-180, mode=180, nrounds=10
+[gen_vectors] master seed = a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecf
+  writing ./keygen_mode180.kat
+  writing ./sign_mode180.kat
+  writing ./verify_mode180.kat
+[gen_vectors] OK (10 rounds)
+$ /workspace/SHUTTLE-NIST/bench/results/20261110T045044.044087Z/work/255-ref/vectors . 10
+[gen_vectors] SHUTTLE-NIST-255, mode=255, nrounds=10
+[gen_vectors] master seed = a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecf
+  writing ./keygen_mode255.kat
+  writing ./sign_mode255.kat
+  writing ./verify_mode255.kat
+[gen_vectors] OK (10 rounds)

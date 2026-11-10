@@ -1,0 +1,225 @@
+{
+  "scale": "QUICK",
+  "timing_iterations": 11,
+  "signatures": 100,
+  "cpu": "AMD EPYC 9V45 96-Core Processor",
+  "affinity": 0,
+  "gcc": "gcc (Debian 14.2.0-19) 14.2.0",
+  "benchmark_commit": "34bf327eee9459a9b29d271a43c305f4b0b8b374",
+  "tested_commit": "34bf327eee9459a9b29d271a43c305f4b0b8b374",
+  "initial_commit": "34bf327eee9459a9b29d271a43c305f4b0b8b374",
+  "initial_status": "?? bench/\n",
+  "flags": [
+    "-O3",
+    "-march=native",
+    "-std=gnu11"
+  ],
+  "configuration": {
+    "scheme": "SHUTTLE",
+    "initial_commit": "34bf327eee9459a9b29d271a43c305f4b0b8b374",
+    "tested_commit": "34bf327eee9459a9b29d271a43c305f4b0b8b374",
+    "sets": [
+      {
+        "name": "120",
+        "paper_pk": 992,
+        "paper_sig": 1175,
+        "paper_q": 32257,
+        "variants": [
+          {
+            "name": "ref",
+            "cwd": "ref",
+            "flags": [
+              "-DSHUTTLE_NIST_MODE=120",
+              "-fno-tree-vectorize",
+              "-fno-tree-slp-vectorize"
+            ],
+            "sources": [
+              "fips202.c",
+              "symmetric-shake.c",
+              "approx_exp.c",
+              "approx_log.c",
+              "sampler.c",
+              "sampler_4x.c",
+              "rejsample.c",
+              "reduce.c",
+              "ntt.c",
+              "poly.c",
+              "polyvec.c",
+              "rounding.c",
+              "shuttle_rans.c",
+              "packing.c",
+              "sign.c"
+            ],
+            "extra_sources": [
+              {
+                "path": "randombytes.c",
+                "flags": [
+                  "-Drandombytes=bench_native_randombytes"
+                ]
+              },
+              {
+                "path": "../bench/rng.c"
+              }
+            ],
+            "libs": [
+              "-lm"
+            ],
+            "kat": [
+              {
+                "name": "vectors",
+                "sources": [
+                  "vector/gen_vectors.c",
+                  "vector/rng.c"
+                ],
+                "args": [
+                  ".",
+                  "10"
+                ],
+                "expect": "OK (10 rounds)"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "180",
+        "paper_pk": 1376,
+        "paper_sig": 1589,
+        "paper_q": 15361,
+        "variants": [
+          {
+            "name": "ref",
+            "cwd": "ref",
+            "flags": [
+              "-DSHUTTLE_NIST_MODE=180",
+              "-fno-tree-vectorize",
+              "-fno-tree-slp-vectorize"
+            ],
+            "sources": [
+              "fips202.c",
+              "symmetric-shake.c",
+              "approx_exp.c",
+              "approx_log.c",
+              "sampler.c",
+              "sampler_4x.c",
+              "rejsample.c",
+              "reduce.c",
+              "ntt.c",
+              "poly.c",
+              "polyvec.c",
+              "rounding.c",
+              "shuttle_rans.c",
+              "packing.c",
+              "sign.c"
+            ],
+            "extra_sources": [
+              {
+                "path": "randombytes.c",
+                "flags": [
+                  "-Drandombytes=bench_native_randombytes"
+                ]
+              },
+              {
+                "path": "../bench/rng.c"
+              }
+            ],
+            "libs": [
+              "-lm"
+            ],
+            "kat": [
+              {
+                "name": "vectors",
+                "sources": [
+                  "vector/gen_vectors.c",
+                  "vector/rng.c"
+                ],
+                "args": [
+                  ".",
+                  "10"
+                ],
+                "expect": "OK (10 rounds)"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "255",
+        "paper_pk": 1696,
+        "paper_sig": 2013,
+        "paper_q": 7681,
+        "variants": [
+          {
+            "name": "ref",
+            "cwd": "ref",
+            "flags": [
+              "-DSHUTTLE_NIST_MODE=255",
+              "-fno-tree-vectorize",
+              "-fno-tree-slp-vectorize"
+            ],
+            "sources": [
+              "fips202.c",
+              "symmetric-shake.c",
+              "approx_exp.c",
+              "approx_log.c",
+              "sampler.c",
+              "sampler_4x.c",
+              "rejsample.c",
+              "reduce.c",
+              "ntt.c",
+              "poly.c",
+              "polyvec.c",
+              "rounding.c",
+              "shuttle_rans.c",
+              "packing.c",
+              "sign.c"
+            ],
+            "extra_sources": [
+              {
+                "path": "randombytes.c",
+                "flags": [
+                  "-Drandombytes=bench_native_randombytes"
+                ]
+              },
+              {
+                "path": "../bench/rng.c"
+              }
+            ],
+            "libs": [
+              "-lm"
+            ],
+            "kat": [
+              {
+                "name": "vectors",
+                "sources": [
+                  "vector/gen_vectors.c",
+                  "vector/rng.c"
+                ],
+                "args": [
+                  ".",
+                  "10"
+                ],
+                "expect": "OK (10 rounds)"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "dependencies": [],
+    "notes": "Only the upstream portable reference exists. sampler_4x is scalar interleaving, not AVX2; AVX2 is unavailable (--). Contrary to the variable-length expectation, this revision always emits SHUTTLE_BYTES and verifies that exact size. The internal rANS payload is variable and padded; unpadded length reads its explicit two-byte little-endian length after seedC and excludes only unused rANS reservation bytes. KAT: original deterministic vector generator, ten rounds with original/tampered-signature/tampered-message checks. No expanded-key API. Timing uses native randombytes; fixed-seed checks use bench entropy."
+  },
+  "benchmark_hashes": {
+    "speed_print.c": "533fc7bd12204078a5390cfb58c05d550b214850876609f8e98f7377b9d4f1b3",
+    "adapter.h": "d27644fd1942061616a1b3840018c4bd16e1a9f8c970e3acf2d5df774e7724fa",
+    "rng.c": "a9aafde4b57feda7c2dac683b01312231f8a4c0bfd247ebde1824d3ed4ae09c2",
+    "driver.c": "a8c5f8458ad0172fcf3cae7a90d8bdf9b81ab435997295bb71e659bf0b6cbdb9",
+    "config.json": "3209df208866598589eed5d098b2fc48346b50d0d3469cd8af3792ee59e9a78a",
+    "speed_print.h": "3946b0226c63125664eb443a20d43563e6d1ba7fa3be5c1b952cd29d1477b2ef",
+    "run.py": "8530f7d4f2877ecfa4291b33aed3e658dfb3de7c7b5cad4bce6399659a046f7f",
+    "cpucycles.c": "31cc4c16b1e896b2cf7cc154aa21430329c0047cf9898a1865f9bfe9904f25e4",
+    ".gitignore": "68c8824892a82c4a572123a7baf73b9b687318782f39021fb10ead083095a2fe",
+    "cpucycles.h": "7f1e2b68cf3e3c76076364af3c5350de61442450c477aec809da8de10e131838",
+    "run.sh": "b4297fab34341f6ef53ef6daad6e6173b826476bc2bf92fb634427e2b9e385a2"
+  }
+}
