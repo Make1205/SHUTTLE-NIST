@@ -1,0 +1,21 @@
+$ /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/120-ref/driver generate 100 /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/120-ref.vectors
+META 256 32257 992 448 1175
+LENGTH 114467 100 1130 1157
+PASS generate
+$ /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/120-ref/driver check 100 /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/120-ref.vectors
+META 256 32257 992 448 1175
+PASS cross 100
+$ /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/180-ref/driver generate 100 /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/180-ref.vectors
+META 256 15361 1376 576 1589
+LENGTH 155307 100 1538 1568
+PASS generate
+$ /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/180-ref/driver check 100 /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/180-ref.vectors
+META 256 15361 1376 576 1589
+PASS cross 100
+$ /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/255-ref/driver generate 100 /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/255-ref.vectors
+META 256 7681 1696 704 2013
+LENGTH 197508 100 1956 1988
+PASS generate
+$ /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/255-ref/driver check 100 /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/255-ref.vectors
+META 256 7681 1696 704 2013
+PASS cross 100

@@ -1,0 +1,14 @@
+$ /workspace/SHUTTLE-NIST/bench/results/20261110T132250.003767Z/work/180-ref/driver time 11
+META 256 15361 1376 576 1589
+KeyGen
+median: 193387 cycles/ticks
+average: 199265 cycles/ticks
+
+Sign
+median: 1042989 cycles/ticks
+average: 1069747 cycles/ticks
+
+Verify
+median: 299025 cycles/ticks
+average: 315856 cycles/ticks
+

@@ -13,9 +13,7 @@
           "name": "ref",
           "cwd": "ref",
           "flags": [
-            "-DSHUTTLE_NIST_MODE=120",
-            "-fno-tree-vectorize",
-            "-fno-tree-slp-vectorize"
+            "-DSHUTTLE_NIST_MODE=120"
           ],
           "sources": [
             "fips202.c",
@@ -75,9 +73,7 @@
           "name": "ref",
           "cwd": "ref",
           "flags": [
-            "-DSHUTTLE_NIST_MODE=180",
-            "-fno-tree-vectorize",
-            "-fno-tree-slp-vectorize"
+            "-DSHUTTLE_NIST_MODE=180"
           ],
           "sources": [
             "fips202.c",
@@ -137,9 +133,7 @@
           "name": "ref",
           "cwd": "ref",
           "flags": [
-            "-DSHUTTLE_NIST_MODE=255",
-            "-fno-tree-vectorize",
-            "-fno-tree-slp-vectorize"
+            "-DSHUTTLE_NIST_MODE=255"
           ],
           "sources": [
             "fips202.c",
@@ -191,5 +185,5 @@
     }
   ],
   "dependencies": [],
-  "notes": "Only the upstream portable reference exists. sampler_4x is scalar interleaving, not AVX2; AVX2 is unavailable (--). Contrary to the variable-length expectation, this revision always emits SHUTTLE_BYTES and verifies that exact size. The internal rANS payload is variable and padded; unpadded length reads its explicit two-byte little-endian length after seedC and excludes only unused rANS reservation bytes. KAT: original deterministic vector generator, ten rounds with original/tampered-signature/tampered-message checks. No expanded-key API. Timing uses native randombytes; fixed-seed checks use bench entropy."
+  "notes": "Only the upstream portable reference exists. sampler_4x is scalar interleaving, not AVX2; AVX2 is unavailable (--). Contrary to the variable-length expectation, this revision always emits SHUTTLE_BYTES and verifies that exact size. The internal rANS payload is variable and padded; unpadded length reads its explicit two-byte little-endian length after seedC and excludes only unused rANS reservation bytes. KAT: original deterministic vector generator, ten rounds with original/tampered-signature/tampered-message checks. No expanded-key API. Timing uses native randombytes; fixed-seed checks use bench entropy. Timing update: fresh encoded keypair/signature per KeyGen/Sign/Verify triple, 20 complete warmup triples, 32-byte zero message. Ref has no bench-added auto-vectorization suppression. Algorithm source and native randomness are unchanged."
 }

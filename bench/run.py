@@ -45,7 +45,7 @@ def main():
  else:cpu=None
  stamp=datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ');out=BENCH/'results'/stamp;out.mkdir(parents=True)
  print('Results:',out,flush=True)
- meta={'scale':'QUICK' if quick else 'FULL','timing_iterations':nt,'signatures':ns,'cpu':platform.processor(),'affinity':cpu,'gcc':call([CC,'--version']).splitlines()[0],'benchmark_commit':call(['git','rev-parse','HEAD']).strip(),'tested_commit':CFG['tested_commit'],'initial_commit':CFG['initial_commit'],'initial_status':call(['git','status','--porcelain']),'flags':BASE,'configuration':CFG,'benchmark_hashes':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in BENCH.iterdir() if p.is_file()}}
+ meta={'scale':'QUICK' if quick else 'FULL','timing_iterations':nt,'signatures':ns,'cpu':platform.processor(),'affinity':cpu,'gcc':call([CC,'--version']).splitlines()[0],'benchmark_commit':call(['git','rev-parse','HEAD']).strip(),'tested_commit':CFG['tested_commit'],'initial_commit':CFG['initial_commit'],'initial_status':call(['git','status','--porcelain']),'timing_warmup':20,'message_bytes':32,'key_input':'bytes','fresh_keys_per_timing_sample':True,'flags':BASE,'configuration':CFG,'benchmark_hashes':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in BENCH.iterdir() if p.is_file()}}
  if Path('/proc/cpuinfo').exists():meta['cpu']=re.search(r'^model name\s*:\s*(.*)$',Path('/proc/cpuinfo').read_text(),re.M)[1]
  (out/'metadata.json').write_text(json.dumps(meta,indent=2)+'\n')
  stage=out/'work'/'source';archive(CFG['tested_commit'],stage)
@@ -111,6 +111,7 @@ def main():
  s+='QUICK is a workflow check only. Full-scale figures are measured locally.\n\n' if quick else 'Full-scale local benchmark.\n\n'
  s+='CPU: '+meta['cpu']+'; affinity: '+str(cpu)+'. GCC: '+meta['gcc']+'.\n\nTested commit: `'+CFG['tested_commit']+'`. Benchmark commit: `'+meta['benchmark_commit']+'`.\n\n'
  s+='Base flags: `'+ ' '.join(BASE)+'`. Each operation: '+str(nt)+' iterations; correctness and lengths: '+str(ns)+' signatures per build/set. Message: 32 bytes. Median units: thousand RDTSC ticks.\n\n'
+ s+='Timing uses fresh byte-key triples and discards 20 complete warmup triples.\n\n'
  s+='Exact per-build options (in addition to base flags and local include paths):\n\n'
  for rr in CFG['sets']:
   for vv in rr['variants']:

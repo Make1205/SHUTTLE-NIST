@@ -94,3 +94,19 @@ header/runtime/libm probe. Failure reports apt package build-essential
 (including libc6-dev). Exact extra per-build flags are printed near the
 SUMMARY heading as well as retained in metadata and logs. This final
 preflight/report change leaves the measured driver and QUICK values unchanged.
+
+
+## Timing consistency correction (2026-11-10)
+
+Previous bench already used 32-byte messages and byte-form sk/pk, but it timed
+three separate loops, reused one final key for Sign/Verify, and did not discard
+20 full warmup triples. It did not satisfy the new-key/warmup convention.
+The bench-only driver is now the shared fresh-triple driver: KeyGen -> Sign ->
+Verify with newly encoded keys each round; discard 20 triples, then collect
+11 QUICK or 10001 FULL samples. Timed message is 32 zero bytes. All native
+key decoding/expansion/hashing and RNG stay inside the same APIs. Native KAT,
+correctness and exact length parsing are unchanged. Bench-added ref
+-fno-tree-vectorize/-fno-tree-slp-vectorize flags are removed to follow the
+common compiler rule. metadata.json explicitly records warmup, message bytes,
+byte-key input and fresh-key sampling. Old FULL results need rerunning; they
+are not relabeled as following the new protocol. Algorithm files are unchanged.
