@@ -88,3 +88,9 @@ keygen/sign/verify rounds, including altered payload and message rejection.
 They execute unchanged, in the extracted source directory. Additional bench
 checks cover the configured 100 or 10000 signatures. There are no system
 library requirements beyond libm and the standard compiler/runtime.
+
+Before any algorithm build, the runner also compile/links a standard C
+header/runtime/libm probe. Failure reports apt package build-essential
+(including libc6-dev). Exact extra per-build flags are printed near the
+SUMMARY heading as well as retained in metadata and logs. This final
+preflight/report change leaves the measured driver and QUICK values unchanged.

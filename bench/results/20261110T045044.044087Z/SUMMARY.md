@@ -8,6 +8,12 @@ Tested commit: `34bf327eee9459a9b29d271a43c305f4b0b8b374`. Benchmark commit: `34
 
 Base flags: `-O3 -march=native -std=gnu11`. Each operation: 11 iterations; correctness and lengths: 100 signatures per build/set. Message: 32 bytes. Median units: thousand RDTSC ticks.
 
+Exact per-build options (in addition to base flags and local include paths):
+
+* 120 ref: `-DSHUTTLE_NIST_MODE=120 -fno-tree-vectorize -fno-tree-slp-vectorize`; link `-lm`.
+* 180 ref: `-DSHUTTLE_NIST_MODE=180 -fno-tree-vectorize -fno-tree-slp-vectorize`; link `-lm`.
+* 255 ref: `-DSHUTTLE_NIST_MODE=255 -fno-tree-vectorize -fno-tree-slp-vectorize`; link `-lm`.
+
 | 参数集 | n | q | pk | sig（仓库实际） | 论文 sig | ref KeyGen/Sign/Verify | AVX2 KeyGen/Sign/Verify |
 |---|---:|---:|---:|---|---:|---|---|
 | 120 | 256 | 32257 | 992 | 1175; unpadded avg 1144.6700, max 1157 | 1175 | 81.821/839.305/135.459 | -- |
